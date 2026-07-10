@@ -1,0 +1,51 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'snowradar-vpn'
+    environment: 'production'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files: []
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node Exporter on VPN servers
+  - job_name: 'node-exporter-vpn'
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      # Oracle Cloud Singapore (ARM)
+      - targets: ['<ORACLE_SGP_IP>:9100']
+        labels:
+          instance: 'sgp-arm'
+          region: 'apac'
+          provider: 'oracle'
+          arch: 'arm64'
+      # Hetzner Falkenstein (x86)
+      - targets: ['<HETZNER_FSN_IP>:9100']
+        labels:
+          instance: 'fsn-x86'
+          region: 'eu'
+          provider: 'hetzner'
+          arch: 'amd64'
+
+  # WireGuard interface metrics (via node exporter)
+  - job_name: 'wireguard-interfaces'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['<ORACLE_SGP_IP>:9100', '<HETZNER_FSN_IP>:9100']
+        labels:
+          __metrics_path__: /metrics
+
+# Remote write for long-term storage (optional, for future)
+# remote_write:
+#   - url: https://prometheus.example.com/api/v1/write

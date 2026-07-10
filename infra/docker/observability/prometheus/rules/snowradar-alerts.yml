@@ -1,0 +1,126 @@
+groups:
+  - name: snowradar-vpn-alerts
+    interval: 30s
+    rules:
+      # Server Health
+      - alert: VPNServerDown
+        expr: up{job="node-exporter-vpn"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "VPN server {{ $labels.server }} ({{ $labels.provider }}) is down"
+          description: "{{ $labels.server }} has been unreachable for 2 minutes."
+
+      - alert: VPNServerHighCPU
+        expr: (100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU on {{ $labels.server }}"
+          description: "CPU usage > 85% for 10m on {{ $labels.instance }}"
+
+      - alert: VPNServerHighMemory
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory on {{ $labels.server }}"
+          description: "Memory usage > 90% for 10m on {{ $labels.instance }}"
+
+      - alert: VPNServerDiskFull
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk almost full on {{ $labels.server }}"
+          description: "Root filesystem < 10% free on {{ $labels.instance }}"
+
+      # Network / VPN Specific
+      - alert: WireguardInterfaceDown
+        expr: node_network_info{device=~"wg0|awg0|wg1",operstate="up"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "WireGuard interface down on {{ $labels.instance }}"
+          description: "Interface {{ $labels.device }} is not up"
+
+      - alert: WireguardHighBandwidth
+        expr: (rate(node_network_transmit_bytes_total{device=~"wg0|awg0|wg1"}[5m]) + rate(node_network_receive_bytes_total{device=~"wg0|awg0|wg1"}[5m])) > 100000000
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High WireGuard bandwidth on {{ $labels.instance }}"
+          description: "Interface {{ $labels.device }} > 100 MB/s for 15m - possible abuse"
+
+      - alert: WireguardPeerCountHigh
+        expr: count(node_network_info{device=~"wg0|awg0|wg1",operstate="up"}) by (instance) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many WireGuard peers on {{ $labels.instance }}"
+          description: "{{ $value }} active peers - check for abuse"
+
+      # System
+      - alert: SystemRebootRequired
+        expr: node_reboot_required == 1
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "Reboot required on {{ $labels.instance }}"
+          description: "Kernel/update requires reboot"
+
+      - alert: SSHBruteForceDetected
+        expr: increase(node_ssh_login_attempts_total{result="failed"}[5m]) > 10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SSH brute force on {{ $labels.instance }}"
+          description: "{{ $value }} failed SSH attempts in 5 minutes"
+
+      - alert: CertificateExpiringSoon
+        expr: ssl_certificate_expiry_timestamp_seconds - time() < 86400 * 30
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "SSL certificate expiring soon on {{ $labels.instance }}"
+          description: "Certificate expires in {{ $value | humanizeDuration }}"
+
+  - name: snowradar-infra-alerts
+    interval: 60s
+    rules:
+      - alert: PrometheusConfigReloadFailed
+        expr: prometheus_config_last_reload_successful == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus config reload failed"
+          description: "Prometheus failed to reload configuration"
+
+      - alert: AlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Alertmanager is down"
+          description: "Alertmanager has been unreachable for 2 minutes"
+
+      - alert: GrafanaDown
+        expr: up{job="grafana"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Grafana is down"
+          description: "Grafana has been unreachable for 2 minutes"

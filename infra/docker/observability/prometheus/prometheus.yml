@@ -1,0 +1,49 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'snowradar-vpn'
+    environment: 'production'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+rule_files:
+  - 'rules/*.yml'
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node Exporter on VPN servers
+  - job_name: 'node-exporter-vpn'
+    scrape_interval: 10s
+    metrics_path: /metrics
+    static_configs:
+      # Oracle Cloud Singapore (ARM)
+      - targets: ['ORACLE_SGP_IP:9100']
+        labels:
+          server: 'sgp'
+          provider: 'oracle'
+          arch: 'arm64'
+          region: 'ap-southeast-1'
+      # Hetzner Falkenstein (x86)
+      - targets: ['HETZNER_FSN_IP:9100']
+        labels:
+          server: 'fsn'
+          provider: 'hetzner'
+          arch: 'amd64'
+          region: 'eu-central'
+
+  # WireGuard interface metrics (if wg_exporter is deployed)
+  - job_name: 'wireguard'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['ORACLE_SGP_IP:9595', 'HETZNER_FSN_IP:9595']
+        labels:
+          service: 'wireguard'
+    # Note: Requires wg_exporter on each server (optional Phase 1+)
