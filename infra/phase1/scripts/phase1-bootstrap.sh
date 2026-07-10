@@ -51,8 +51,8 @@ sysctl --system
 log "Setting up WireGuard (wg0)..."
 bash "$SCRIPT_DIR/setup-wireguard.sh"
 
-# 5. Setup AmneziaWG (awg0)
-log "Setting up AmneziaWG (awg0)..."
+# 5. Setup AmneziaWG (wg1)
+log "Setting up AmneziaWG (wg1)..."
 bash "$SCRIPT_DIR/setup-amneziawg.sh"
 
 # 6. Install Node Exporter
@@ -62,16 +62,16 @@ bash "$SCRIPT_DIR/05-node-exporter.sh"
 # 7. Final UFW rules for VPN ports
 log "Adding VPN ports to UFW..."
 ufw allow 51820/udp comment 'WireGuard wg0'
-ufw allow 51821/udp comment 'AmneziaWG awg0'
+ufw allow 51821/udp comment 'AmneziaWG wg1'
 ufw reload
 
 # 8. Save server keys for reference
 log "Saving server keys..."
 mkdir -p /root/snowradar-keys
-cp /etc/wireguard/server_public.key /root/snowradar-keys/wg0_public.key
 cp /etc/wireguard/server_private.key /root/snowradar-keys/wg0_private.key
-cp /etc/amneziawg/server_public.key /root/snowradar-keys/awg0_public.key
-cp /etc/amneziawg/server_private.key /root/snowradar-keys/awg0_private.key
+cp /etc/wireguard/server_public.key /root/snowradar-keys/wg0_public.key
+cp /etc/wireguard/wg1_private.key /root/snowradar-keys/wg1_private.key
+cp /etc/wireguard/wg1_public.key /root/snowradar-keys/wg1_public.key
 chmod 600 /root/snowradar-keys/*
 
 # 9. Display summary
@@ -87,12 +87,12 @@ echo ""
 echo "WireGuard (wg0):"
 echo "  Port: 51820/udp"
 echo "  Public Key: $(cat /etc/wireguard/server_public.key)"
-echo "  Subnet: 10.10.0.0/24, fd00:10:10::/64"
+echo "  Subnet: 10.0.0.0/24, fd00:dead:beef::/64"
 echo ""
-echo "AmneziaWG (awg0):"
+echo "AmneziaWG (wg1):"
 echo "  Port: 51821/udp"
-echo "  Public Key: $(cat /etc/amneziawg/server_public.key)"
-echo "  Subnet: 10.11.0.0/24"
+echo "  Public Key: $(cat /etc/wireguard/wg1_public.key)"
+echo "  Subnet: 10.1.0.0/24"
 echo "  Params: Jc=3 Jmin=40 Jmax=70 S1=0 S2=0 H1=1 H2=2 H3=3 H4=4"
 echo ""
 echo "Node Exporter:"
@@ -102,10 +102,10 @@ echo ""
 echo "Keys saved to: /root/snowradar-keys/"
 echo ""
 warn "IMPORTANT: Test SSH access in NEW terminal before closing this one!"
-warn "ssh -i ~/.ssh/snow_radar_key snowradar@<this-ip>"
+warn "ssh -i ~/.ssh/snow_radar_key snowadmin@<this-ip>"
 echo ""
 info "Next steps:"
-info "1. Verify both servers are up: wg show; systemctl status wg-quick@wg0 wg-quick@awg0 node_exporter"
+info "1. Verify both servers are up: wg show; systemctl status wg-quick@wg0 wg-quick@wg1 node_exporter"
 info "2. From local machine, start Prometheus/Grafana: cd infra/docker/observability && docker compose up -d"
 info "3. Update prometheus.yml with actual server IPs"
 info "4. Import Grafana dashboard from grafana/dashboards/snowradar-vpn-overview.json"

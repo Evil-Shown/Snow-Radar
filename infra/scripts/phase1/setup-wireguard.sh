@@ -9,10 +9,10 @@ SERVER_IPV4="${1:-}"
 SERVER_IPV6="${2:-}"
 WG_PORT="${3:-51820}"
 WG_INTERFACE="wg0"
-WG_SUBNET_V4="10.10.0.0/24"
-WG_SUBNET_V6="fd00:10:10::/64"
-WG_SERVER_IP_V4="10.10.0.1"
-WG_SERVER_IP_V6="fd00:10:10::1"
+WG_SUBNET_V4="10.0.0.0/24"
+WG_SUBNET_V6="fd00:dead:beef::/64"
+WG_SERVER_IP_V4="10.0.0.1"
+WG_SERVER_IP_V6="fd00:dead:beef::1"
 
 # Auto-detect primary interface if not provided
 if [[ -z "$SERVER_IPV4" ]]; then
@@ -102,7 +102,7 @@ echo "Client config template:"
 cat <<CLIENTEOF
 [Interface]
 PrivateKey = <CLIENT_PRIVATE_KEY>
-Address = 10.10.0.X/24, fd00:10:10::X/64
+Address = 10.0.0.X/24, fd00:dead:beef::X/64
 DNS = 1.1.1.1, 1.0.0.1
 
 [Peer]

@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup-amneziawg.sh - Configure AmneziaWG (awg0) for censorship resistance
+# setup-amneziawg.sh - Configure AmneziaWG (wg1) for censorship resistance
 # Usage: sudo ./setup-amneziawg.sh [server_ipv4] [awg_port]
 # Example: sudo ./setup-amneziawg.sh 1.2.3.4 51821
 
@@ -7,9 +7,9 @@ set -euo pipefail
 
 SERVER_IPV4="${1:-}"
 AWG_PORT="${2:-51821}"
-AWG_INTERFACE="awg0"
-AWG_SUBNET_V4="10.11.0.0/24"
-AWG_SERVER_IP_V4="10.11.0.1"
+AWG_INTERFACE="wg1"
+AWG_SUBNET_V4="10.10.0.0/24"
+AWG_SERVER_IP_V4="10.10.0.1"
 
 # Auto-detect primary interface
 if [[ -z "$SERVER_IPV4" ]]; then
@@ -45,19 +45,19 @@ if ! command -v amneziawg-go &> /dev/null; then
     echo "AmneziaWG ${AWG_VERSION} installed"
 fi
 
-# Create AmneziaWG directory
-mkdir -p /etc/amneziawg
-chmod 700 /etc/amneziawg
+# Create WireGuard directory (keys stored here for both wg0 and wg1)
+mkdir -p /etc/wireguard
+chmod 700 /etc/wireguard
 
 # Generate keys if they don't exist
-if [[ ! -f /etc/amneziawg/server_private.key ]]; then
+if [[ ! -f /etc/wireguard/wg1_private.key ]]; then
     echo "Generating AmneziaWG server keys..."
-    amneziawg-go genkey | tee /etc/amneziawg/server_private.key | amneziawg-go pubkey > /etc/amneziawg/server_public.key
-    chmod 600 /etc/amneziawg/server_private.key
+    amneziawg-go genkey | tee /etc/wireguard/wg1_private.key | amneziawg-go pubkey > /etc/wireguard/wg1_public.key
+    chmod 600 /etc/wireguard/wg1_private.key
 fi
 
-SERVER_PRIVATE_KEY=$(cat /etc/amneziawg/server_private.key)
-SERVER_PUBLIC_KEY=$(cat /etc/amneziawg/server_public.key)
+SERVER_PRIVATE_KEY=$(cat /etc/wireguard/wg1_private.key)
+SERVER_PUBLIC_KEY=$(cat /etc/wireguard/wg1_public.key)
 
 echo "AmneziaWG Server Public Key: $SERVER_PUBLIC_KEY"
 
@@ -73,8 +73,8 @@ H2=2
 H3=3
 H4=4
 
-# Create awg0.conf
-cat > /etc/amneziawg/${AWG_INTERFACE}.conf <<EOF
+# Create wg1.conf in /etc/wireguard/
+cat > /etc/wireguard/${AWG_INTERFACE}.conf <<EOF
 [Interface]
 Address = ${AWG_SERVER_IP_V4}/24
 ListenPort = ${AWG_PORT}
@@ -97,9 +97,9 @@ PostUp = iptables -A FORWARD -i %i -o ${PHYS_IFACE} -j ACCEPT; iptables -A FORWA
 PostDown = iptables -D FORWARD -i %i -o ${PHYS_IFACE} -j ACCEPT; iptables -D FORWARD -i ${PHYS_IFACE} -o %i -m state --state RELATED,ESTABLISHED -j ACCEPT
 EOF
 
-chmod 600 /etc/amneziawg/${AWG_INTERFACE}.conf
+chmod 600 /etc/wireguard/${AWG_INTERFACE}.conf
 
-# Create systemd service
+# Create systemd service for amneziawg-go
 cat > /etc/systemd/system/amneziawg@.service <<'EOF'
 [Unit]
 Description=AmneziaWG tunnel %I
@@ -141,7 +141,7 @@ echo "Client config template:"
 cat <<CLIENTEOF
 [Interface]
 PrivateKey = <CLIENT_PRIVATE_KEY>
-Address = 10.11.0.X/24
+Address = 10.10.0.X/24
 DNS = 1.1.1.1, 1.0.0.1
 Jc = ${JC}
 Jmin = ${JMIN}

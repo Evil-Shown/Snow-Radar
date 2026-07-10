@@ -31,7 +31,7 @@ PROVIDER=$(detect_provider)
 log "Detected provider: $PROVIDER"
 
 # Configuration
-ADMIN_USER="snowradar"
+ADMIN_USER="snowadmin"
 SSH_PORT=22
 SSH_KEY_FILE="/tmp/authorized_keys_new"
 
@@ -91,7 +91,7 @@ MaxSessions 2
 LoginGraceTime 30
 ClientAliveInterval 300
 ClientAliveCountMax 2
-AllowUsers snowradar
+AllowUsers snowadmin
 
 # Logging
 SyslogFacility AUTH
