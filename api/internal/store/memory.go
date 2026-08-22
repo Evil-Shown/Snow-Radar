@@ -1,17 +1,19 @@
 package store
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"sync"
 )
 
 // Memory is a concurrency-safe in-memory Store for tests/dev.
 type Memory struct {
-	mu    sync.RWMutex
-	users map[string]*User // by id
+	mu      sync.RWMutex
+	users   map[string]*User // by id
 	byEmail map[string]*User
-	peers map[string]*Peer // by id
-	subs  map[string]*Subscription
-	seq   int
+	peers   map[string]*Peer // by id
+	subs    map[string]*Subscription
 }
 
 func NewMemory() *Memory {
@@ -28,9 +30,13 @@ func (m *Memory) CreateUser(u *User) error {
 	if _, ok := m.byEmail[u.Email]; ok {
 		return errors.New("email already registered")
 	}
-	m.seq++
 	if u.ID == "" {
-		u.ID = "u-" + itoa(m.seq)
+		// AUDIT FINDING #7: sequential "u-N" IDs were enumerable, which
+		// combined with webhook user binding made targeted attacks trivial.
+		// Use 128-bit random IDs everywhere.
+		b := make([]byte, 16)
+		_, _ = rand.Read(b)
+		u.ID = hex.EncodeToString(b)
 	}
 	cp := *u
 	m.users[u.ID] = &cp

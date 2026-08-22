@@ -148,7 +148,7 @@ echo "Obfuscation Parameters:"
 echo "  Jc=${JC} Jmin=${JMIN} Jmax=${JMAX} S1=${S1} S2=${S2}"
 echo "  H1=${H1} H2=${H2} H3=${H3} H4=${H4}"
 echo ""
-echo "Client config template:"
+echo "Client config template (replace X with an allocated host octet):"
 cat <<CLIENTEOF
 [Interface]
 PrivateKey = <CLIENT_PRIVATE_KEY>

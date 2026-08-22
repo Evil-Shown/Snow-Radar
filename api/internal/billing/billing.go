@@ -37,9 +37,15 @@ func VerifyPaddle(secret string, header string, rawBody []byte) error {
 	if ts == "" || h1 == "" {
 		return ErrBadSignature
 	}
-	// Replay guard: reject timestamps older than 5 minutes.
+	// Replay window: reject timestamps older than 5 min AND any timestamp
+	// in the future (a future-dated signature would otherwise extend the
+	// replay window indefinitely — audit finding #6).
 	var tsUnix int64
-	if _, err := fmt.Sscanf(ts, "%d", &tsUnix); err != nil || time.Since(time.Unix(tsUnix, 0)) > 5*time.Minute {
+	if _, err := fmt.Sscanf(ts, "%d", &tsUnix); err != nil {
+		return ErrBadSignature
+	}
+	skew := time.Since(time.Unix(tsUnix, 0))
+	if skew > 5*time.Minute || skew < -2*time.Minute {
 		return ErrBadSignature
 	}
 	mac := hmac.New(sha256.New, []byte(secret))

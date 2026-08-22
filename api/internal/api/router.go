@@ -38,18 +38,55 @@ type Server struct {
 	cfg     Config
 	store   store.Store
 	issuer  *auth.TokenIssuer
+	peers   *peer.Service
+	refresh *refreshStore
+	limiter *rateLimiter
 }
 
-func NewRouter(cfg Config, st store.Store, issuer *auth.TokenIssuer) http.Handler {
-	s := &Server{cfg: cfg, store: st, issuer: issuer}
+// NewServer wires the full dependency graph ONCE at startup.
+//
+// SECURITY NOTE (audit finding #1/#34): constructing peer.Service per request
+// reset allocator state on every call, handing duplicate tunnel IPs to
+// different peers. Long-lived singletons are mandatory here.
+func NewServer(cfg Config, st store.Store, issuer *auth.TokenIssuer) (*Server, error) {
+	s := &Server{
+		cfg:     cfg,
+		store:   st,
+		issuer:  issuer,
+		refresh: newRefreshStore(),
+		limiter: newRateLimiter(),
+	}
+	pubKeys := map[string]string{
+		"sgp": cfg.SGPWgPublicKey,
+		"fsn": cfg.FSNWgPublicKey,
+	}
+	endpoints := map[string]map[bool]string{
+		"sgp": {false: "sgp.snowradar.app:51820", true: "sgp.snowradar.app:51821"},
+		"fsn": {false: "fsn.snowradar.app:51820", true: "fsn.snowradar.app:51821"},
+	}
+	svc, err := peer.NewService(st, pubKeys, endpoints)
+	if err != nil {
+		return nil, err
+	}
+	s.peers = svc
+	return s, nil
+}
+
+func NewRouter(cfg Config, st store.Store, issuer *auth.TokenIssuer) (http.Handler, error) {
+	s, err := NewServer(cfg, st, issuer)
+	if err != nil {
+		return nil, err
+	}
 	g := gin.New()
 	g.Use(gin.Recovery())
+	g.Use(s.bodyLimit(1 << 20)) // global 1 MiB cap: no endpoint needs more
 
-	g.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+	g.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 
 	v1 := g.Group("/api/v1")
-	v1.POST("/auth/signup", s.signup)
-	v1.POST("/auth/login", s.login)
+	v1.POST("/auth/signup", s.rateLimit(10, time.Minute), s.signup)
+	v1.POST("/auth/login", s.rateLimit(10, time.Minute), s.login)
+	v1.POST("/auth/refresh", s.rateLimit(30, time.Minute), s.refresh)
 	v1.POST("/webhooks/paddle", s.paddleWebhook)
 	v1.POST("/webhooks/payhere", s.payHereWebhook)
 
@@ -57,7 +94,7 @@ func NewRouter(cfg Config, st store.Store, issuer *auth.TokenIssuer) http.Handle
 	authed.POST("/connect", s.connect)
 	authed.GET("/peers", s.listPeers)
 
-	return g
+	return g, nil
 }
 
 type credentials struct {
@@ -68,41 +105,82 @@ type credentials struct {
 func (s *Server) signup(c *gin.Context) {
 	var req credentials
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "email and a password of at least 12 characters are required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email and a password of at least 12 characters are required"})
 		return
 	}
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "internal"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 	u := &store.User{Email: strings.ToLower(strings.TrimSpace(req.Email)), PasswordHash: hash}
 	if err := s.store.CreateUser(u); err != nil {
-		c.JSON(409, gin.H{"error": "email already registered"})
+		c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
 		return
 	}
-	c.JSON(201, gin.H{"user_id": u.ID})
+	c.JSON(http.StatusCreated, gin.H{"user_id": u.ID})
+}
+
+func (s *Server) issueTokenPair(userID string) (access, refresh string, err error) {
+	jti := newJTI()
+	if access, err = s.issuer.Issue(userID, auth.TokenAccess, ""); err != nil {
+		return "", "", err
+	}
+	if refresh, err = s.issuer.Issue(userID, auth.TokenRefresh, jti); err != nil {
+		return "", "", err
+	}
+	s.refresh.issue(jti, userID) // trackable + revocable from now on
+	return access, refresh, nil
 }
 
 func (s *Server) login(c *gin.Context) {
 	var req credentials
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "invalid request"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
 	u, err := s.store.GetUserByEmail(strings.ToLower(strings.TrimSpace(req.Email)))
 	if err != nil || !auth.VerifyPassword(req.Password, u.PasswordHash) {
 		// Uniform error: never reveal whether the email exists.
-		c.JSON(401, gin.H{"error": "invalid credentials"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
-	access, err1 := s.issuer.Issue(u.ID, false)
-	refresh, err2 := s.issuer.Issue(u.ID, true)
-	if err1 != nil || err2 != nil {
-		c.JSON(500, gin.H{"error": "internal"})
+	access, refresh, err := s.issueTokenPair(u.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	c.JSON(200, gin.H{"access_token": access, "refresh_token": refresh})
+	c.JSON(http.StatusOK, gin.H{"access_token": access, "refresh_token": refresh})
+}
+
+type refreshRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
+// refresh implements rotate-on-use: a refresh token is valid exactly once.
+// Replaying a consumed token burns every outstanding session for that user.
+func (s *Server) refresh(c *gin.Context) {
+	var req refreshRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	claims, err := s.issuer.Verify(req.RefreshToken)
+	if err != nil || claims.TokenType != auth.TokenRefresh {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+		return
+	}
+	rec, ok := s.refresh.consume(claims.ID)
+	if !ok || rec.userID != claims.UserID {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "token revoked or replayed"})
+		return
+	}
+	access, newRefresh, err := s.issueTokenPair(claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"access_token": access, "refresh_token": newRefresh})
 }
 
 func (s *Server) requireAuth() gin.HandlerFunc {
@@ -110,12 +188,12 @@ func (s *Server) requireAuth() gin.HandlerFunc {
 		h := c.GetHeader("Authorization")
 		const prefix = "Bearer "
 		if !strings.HasPrefix(h, prefix) {
-			c.AbortWithStatusJSON(401, gin.H{"error": "missing bearer token"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
 			return
 		}
 		claims, err := s.issuer.Verify(strings.TrimPrefix(h, prefix))
-		if err != nil {
-			c.AbortWithStatusJSON(401, gin.H{"error": "invalid token"})
+		if err != nil || claims.TokenType != auth.TokenAccess {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return
 		}
 		c.Set("user_id", claims.UserID)
@@ -127,20 +205,6 @@ type connectRequest struct {
 	NodeID      string `json:"node_id" binding:"required,oneof=sgp fsn"`
 	PublicKey   string `json:"public_key" binding:"required"`
 	StealthMode bool   `json:"stealth_mode"`
-}
-
-func (s *Server) peerService(pubKeys map[string]map[bool]string) *peer.Service {
-	svc, _ := peer.NewService(s.store,
-		map[string]string{
-			"sgp": pubKeys["sgp"][false],
-			"fsn": pubKeys["fsn"][false],
-		},
-		map[string]map[bool]string{
-			"sgp": {false: "sgp.snowradar.app:51820", true: "sgp.snowradar.app:51821"},
-			"fsn": {false: "fsn.snowradar.app:51820", true: "fsn.snowradar.app:51821"},
-		},
-	)
-	return svc
 }
 
 func (s *Server) connect(c *gin.Context) {
@@ -157,20 +221,20 @@ func (s *Server) connect(c *gin.Context) {
 	}
 	for node := range pubKeys {
 		if pubKeys[node][false] == "" || pubKeys[node][true] == "" {
-			c.JSON(503, gin.H{"error": "node keys not provisioned yet"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "node keys not provisioned yet"})
 			return
 		}
 	}
 
-	p, clientCfg, err := s.peerService(pubKeys).Connect(userID, req.NodeID, req.PublicKey, req.StealthMode)
+	p, clientCfg, err := s.peers.Connect(userID, req.NodeID, req.PublicKey, req.StealthMode)
 	if err != nil {
 		switch {
 		case errors.Is(err, peer.ErrNotSubscribed):
-			c.JSON(402, gin.H{"error": "no active subscription"})
+			c.JSON(http.StatusPaymentRequired, gin.H{"error": "no active subscription"})
 		case errors.Is(err, peer.ErrTooManyPeers):
-			c.JSON(409, gin.H{"error": "device limit reached"})
+			c.JSON(http.StatusConflict, gin.H{"error": "device limit reached"})
 		default:
-			c.JSON(400, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		}
 		return
 	}
@@ -185,39 +249,60 @@ func (s *Server) listPeers(c *gin.Context) {
 func (s *Server) paddleWebhook(c *gin.Context) {
 	raw, err := billing.ReadBody(c.Request, maxWebhookBody)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "body too large or unreadable"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "body too large or unreadable"})
 		return
 	}
 	if s.cfg.PaddleSecret == "" {
-		c.JSON(503, gin.H{"error": "webhook secret not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "webhook secret not configured"})
 		return
 	}
 	if err := billing.VerifyPaddle(s.cfg.PaddleSecret, c.GetHeader("Paddle-Signature"), raw); err != nil {
-		c.JSON(403, gin.H{"error": "signature verification failed"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "signature verification failed"})
 		return
 	}
 	ev, err := billing.ParsePaddle(raw)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "unrecognized payload"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unrecognized payload"})
 		return
 	}
+
+	// AUDIT FINDING #5 (HIGH): the webhook previously trusted user_id from
+	// provider custom_data unconditionally. With guessable sequential user
+	// IDs an attacker could attach a subscription to a VICTIM's account.
+	// Mitigations now: (1) target user must exist; (2) a webhook may never
+	// overwrite an ACTIVE subscription held under a DIFFERENT provider
+	// binding without matching external id (i.e., only the owner of that
+	// provider subscription or a fresh checkout can transition it).
+	victim, err := s.store.GetUser(ev.UserID)
+	if err != nil {
+		// Unknown user: reject instead of creating phantom entitlements.
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown user reference"})
+		return
+	}
+	existing, err := s.store.GetSubscription(victim.ID)
+	if err == nil && existing.External != ev.External &&
+		existing.State == string(billing.StateActive) {
+		c.JSON(http.StatusConflict, gin.H{"error": "user already holds an active subscription"})
+		return
+	}
+
 	if err := s.store.UpsertSubscription(&store.Subscription{
 		UserID: ev.UserID, Provider: ev.Provider, External: ev.External, State: string(ev.State),
 	}); err != nil {
-		c.JSON(500, gin.H{"error": "internal"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	c.JSON(200, gin.H{"ok": true})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (s *Server) payHereWebhook(c *gin.Context) {
 	if s.cfg.PayHereSecret == "" {
-		c.JSON(503, gin.H{"error": "webhook secret not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "webhook secret not configured"})
 		return
 	}
 	// PayHere POSTs form-encoded values; hash covers the documented concat.
 	if err := c.Request.ParseForm(); err != nil {
-		c.JSON(400, gin.H{"error": "bad form"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad form"})
 		return
 	}
 	f := c.Request.PostForm
@@ -227,25 +312,29 @@ func (s *Server) payHereWebhook(c *gin.Context) {
 		f.Get("payhere_currency"), f.Get("status_code"), f.Get("md5sig"),
 	)
 	if !ok {
-		c.JSON(403, gin.H{"error": "signature verification failed"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "signature verification failed"})
 		return
 	}
 	state := map[string]string{"2": "active", "0": "past_due", "-1": "cancelled", "-2": "past_due", "-3": "cancelled"}[f.Get("status_code")]
 	if state == "" {
-		c.JSON(400, gin.H{"error": "unknown status_code"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown status_code"})
 		return
 	}
-	// PayHere identifies the payer by custom fields we set at checkout.
+	// Same takeover guard as the Paddle path (finding #5).
 	userID := f.Get("custom_1")
 	if userID == "" {
-		c.JSON(400, gin.H{"error": "missing user reference"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing user reference"})
+		return
+	}
+	if _, err := s.store.GetUser(userID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown user reference"})
 		return
 	}
 	if err := s.store.UpsertSubscription(&store.Subscription{
 		UserID: userID, Provider: "payhere", External: f.Get("subscription_id"), State: state,
 	}); err != nil {
-		c.JSON(500, gin.H{"error": "internal"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	c.JSON(200, gin.H{"ok": true})
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

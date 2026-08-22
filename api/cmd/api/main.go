@@ -37,6 +37,9 @@ func loadRSAPrivateKey(path string) *rsa.PrivateKey {
 
 func main() {
 	cfg := api.Config{
+		// Loopback default protects bare-metal runs; containers override via
+		// ENV in the Dockerfile (audit finding #8: loopback-only bind made
+		// the container unreachable through published ports).
 		Addr:            getenv("LISTEN_ADDR", "127.0.0.1:8080"),
 		JWTPrivateKey:   loadRSAPrivateKey(getenv("JWT_PRIVATE_KEY_PATH", "")),
 		PaddleSecret:    os.Getenv("PADDLE_WEBHOOK_SECRET"),
@@ -52,7 +55,10 @@ func main() {
 
 	st := store.NewMemory() // Postgres-backed store lands with migrations
 	issuer := auth.NewTokenIssuer(cfg.JWTPrivateKey, api.AccessTTL, api.RefreshTTL)
-	router := api.NewRouter(cfg, st, issuer)
+	router, err := api.NewRouter(cfg, st, issuer)
+	if err != nil {
+		log.Fatalf("router init: %v", err)
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

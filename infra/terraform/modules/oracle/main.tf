@@ -61,23 +61,8 @@ resource "oci_core_security_list" "snow_radar" {
     }
   }
 
-  ingress_security_rules {
-    protocol = "6"
-    source   = "0.0.0.0/0"
-    tcp_options {
-      min = 80
-      max = 80
-    }
-  }
-
-  ingress_security_rules {
-    protocol = "6"
-    source   = "0.0.0.0/0"
-    tcp_options {
-      min = 443
-      max = 443
-    }
-  }
+  # NOTE (audit #12): 80/443 intentionally NOT opened — no HTTP(S) service
+  # runs on exit nodes yet. Add when a TLS reverse proxy actually deploys.
 
   ingress_security_rules {
     protocol = "17"

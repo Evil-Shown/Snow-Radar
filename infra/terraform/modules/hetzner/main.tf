@@ -17,19 +17,7 @@ resource "hcloud_firewall" "snow_radar" {
     source_ips = ["0.0.0.0/0", "::/0"]
   }
 
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "80"
-    source_ips = ["0.0.0.0/0", "::/0"]
-  }
-
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "443"
-    source_ips = ["0.0.0.0/0", "::/0"]
-  }
+  # NOTE (audit #12): 80/443 intentionally NOT opened — see oracle module.
 
   rule {
     direction  = "in"

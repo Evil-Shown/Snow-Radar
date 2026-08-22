@@ -10,5 +10,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -buildid=" -o /o
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/api /api
 USER nonroot:nonroot
+# Containers must bind all interfaces; bare-metal default stays loopback.
+ENV LISTEN_ADDR=0.0.0.0:8080
 EXPOSE 8080
 ENTRYPOINT ["/api"]

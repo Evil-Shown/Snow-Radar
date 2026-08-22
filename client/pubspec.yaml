@@ -1,0 +1,28 @@
+name: snowradar_client
+description: Snow Radar — privacy-first VPN client (Sri Lanka first).
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.5.1
+  wireguard_flutter: ^0.6.0+2
+  flutter_secure_storage: ^9.2.2
+  http: ^1.2.2
+  cryptography: ^2.7.0
+  json_annotation: ^4.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.11
+  json_serializable: ^6.8.0
+
+flutter:
+  uses-material-design: true

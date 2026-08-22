@@ -86,18 +86,29 @@ func VerifyPassword(password, phc string) bool {
 
 // ---- RS256 JWT sessions ----
 
+type TokenType string
+
+const (
+	TokenAccess  TokenType = "access"
+	TokenRefresh TokenType = "refresh"
+)
+
 type Claims struct {
-	UserID string `json:"uid"`
+	UserID    string    `json:"uid"`
+	TokenType TokenType `json:"typ"`
 	jwt.RegisteredClaims
 }
 
 // TokenIssuer signs/verifies RS256 session tokens.
+// Refresh tokens carry a unique jti so the API can rotate/revoke them
+// (audit finding #2); access tokens are short-lived stateless JWTs.
 type TokenIssuer struct {
 	private    *rsa.PrivateKey
 	public     *rsa.PublicKey
 	nowFunc    func() time.Time
 	accessTTL  time.Duration
 	refreshTTL time.Duration
+	jtiFunc    func() string
 }
 
 func NewTokenIssuer(private *rsa.PrivateKey, accessTTL, refreshTTL time.Duration) *TokenIssuer {
@@ -110,15 +121,22 @@ func NewTokenIssuer(private *rsa.PrivateKey, accessTTL, refreshTTL time.Duration
 	}
 }
 
-func (t *TokenIssuer) Issue(userID string, refresh bool) (string, error) {
+func (t *TokenIssuer) Issue(userID string, typ TokenType, jti string) (string, error) {
 	now := t.nowFunc()
 	ttl := t.accessTTL
-	if refresh {
+	if typ == TokenRefresh {
 		ttl = t.refreshTTL
+		if jti == "" {
+			return "", errors.New("auth: refresh tokens require a jti")
+		}
+	} else if typ != TokenAccess {
+		return "", errors.New("auth: unknown token type")
 	}
 	claims := Claims{
-		UserID: userID,
+		UserID:    userID,
+		TokenType: typ,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 			Issuer:    "snowradar-api",

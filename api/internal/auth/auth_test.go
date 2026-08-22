@@ -44,7 +44,7 @@ func TestJWTIssueVerify(t *testing.T) {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	issuer := NewTokenIssuer(key, 15*time.Minute, 30*24*time.Hour)
 
-	access, err := issuer.Issue("user-123", false)
+	access, err := issuer.Issue("user-123", TokenAccess, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,10 +65,10 @@ func TestJWTTamperRejected(t *testing.T) {
 	other, _ := rsa.GenerateKey(rand.Reader, 2048)
 	issuer := NewTokenIssuer(key, time.Minute, time.Hour)
 
-	token, _ := issuer.Issue("victim", false)
+	token, _ := issuer.Issue("victim", TokenAccess, "")
 
 	// signed by a different key
-	forged, _ := NewTokenIssuer(other, time.Minute, time.Hour).Issue("attacker", false)
+	forged, _ := NewTokenIssuer(other, time.Minute, time.Hour).Issue("attacker", TokenAccess, "")
 	if forged == token {
 		t.Fatal("keys produced identical tokens")
 	}
@@ -83,7 +83,7 @@ func TestJWTTamperRejected(t *testing.T) {
 func TestJWTExpiredRejected(t *testing.T) {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	issuer := NewTokenIssuer(key, -time.Second, time.Hour) // already expired
-	token, _ := issuer.Issue("u", false)
+	token, _ := issuer.Issue("u", TokenAccess, "")
 	if _, err := issuer.Verify(token); err == nil {
 		t.Fatal("expired token accepted")
 	}

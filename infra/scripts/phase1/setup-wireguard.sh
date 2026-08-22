@@ -49,11 +49,13 @@ echo "Node: $NODE  wg-subnet: $WG_SUBNET_V4  awg-sibling present (do NOT reuse t
 
 # Auto-detect primary IPv4 if not provided
 if [[ -z "$SERVER_IPV4" ]]; then
-    SERVER_IPV4=$(ip route get 1.1.1.1 | awk '{print $7; exit}')
+    SERVER_IPV4=$(ip route get 1.1.1.1 | grep -oP 'src \K\S+' || ip route get 1.1.1.1 | awk '{print $7; exit}')
     echo "Auto-detected IPv4: $SERVER_IPV4"
 fi
 if [[ -z "$SERVER_IPV6" ]]; then
-    SERVER_IPV6=$(ip -6 route get 2001:4860:4860::8888 2>/dev/null | awk '{print $7; exit}' || true)
+    # audit #9: field position in `ip -6 route get` output is not stable
+    # across versions; match the src token explicitly instead of $7.
+    SERVER_IPV6=$(ip -6 route get 2001:4860:4860::8888 2>/dev/null | grep -oP 'src \K\S+' || true)
     if [[ -n "$SERVER_IPV6" ]]; then
         echo "Auto-detected IPv6: $SERVER_IPV6"
     else
@@ -107,11 +109,11 @@ echo "Server Public Key (for clients): $SERVER_PUBLIC_KEY"
 echo "Server Endpoint: ${SERVER_IPV4}:${WG_PORT}"
 [[ -n "$SERVER_IPV6" ]] && echo "Server Endpoint IPv6: [${SERVER_IPV6}]:${WG_PORT}"
 echo ""
-echo "Client config template:"
+echo "Client config template (replace X with an allocated host octet, .2-.254):"
 cat <<CLIENTEOF
 [Interface]
 PrivateKey = <CLIENT_PRIVATE_KEY>
-Address = ${WG_SUBNET_V4%.0}.X/${WG_SUBNET_V4##*/}, ${WG_SUBNET_V6%X}X/${WG_SUBNET_V6##*/}
+Address = ${WG_SUBNET_V4%.*}.X/${WG_SUBNET_V4##*/}, ${WG_SUBNET_V6%::*}::X/${WG_SUBNET_V6##*/}
 DNS = 1.1.1.1, 1.0.0.1
 
 [Peer]
