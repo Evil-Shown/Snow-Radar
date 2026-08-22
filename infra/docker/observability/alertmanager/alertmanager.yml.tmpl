@@ -1,0 +1,50 @@
+# Alertmanager config template (audit #7).
+# ${SMTP_PASSWORD} and ${DISCORD_WEBHOOK_URL} are substituted at container
+# start by render-config.sh — Alertmanager itself cannot expand env vars.
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'alerts@snowradar.app'
+  smtp_auth_username: 'alerts@snowradar.app'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+
+route:
+  group_by: ['alertname', 'server', 'provider']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default'
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: 'critical-alerts'
+      continue: true
+    - matchers:
+        - severity="warning"
+      receiver: 'warning-alerts'
+
+receivers:
+  - name: 'default'
+    email_configs:
+      - to: 'admin@snowradar.app'
+        send_resolved: true
+
+  - name: 'critical-alerts'
+    email_configs:
+      - to: 'admin@snowradar.app, oncall@snowradar.app'
+        send_resolved: true
+    webhook_configs:
+      - url: '${DISCORD_WEBHOOK_URL}'
+        send_resolved: true
+
+  - name: 'warning-alerts'
+    email_configs:
+      - to: 'admin@snowradar.app'
+        send_resolved: true
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: ['alertname', 'instance']

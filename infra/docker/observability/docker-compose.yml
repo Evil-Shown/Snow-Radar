@@ -1,13 +1,16 @@
 version: '3.8'
 
+# SECURITY (audit #6): management UIs bind to loopback ONLY.
+# Remote access via SSH tunnel: ssh -L 3000:127.0.0.1:3000 <monitor-host>
+
 services:
   prometheus:
-    image: prom/prometheus:v2.47.2
+    image: prom/prometheus:v2.53.0
     container_name: snowradar-prometheus
     restart: unless-stopped
     user: "65534:65534"  # nobody user
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
@@ -17,10 +20,9 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=30d'
       - '--storage.tsdb.retention.size=10GB'
-      - '--web.enable-lifecycle'
-      - '--web.enable-admin-api'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
+      # audit #6: --web.enable-lifecycle / --web.enable-admin-api removed
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
       interval: 30s
@@ -29,18 +31,19 @@ services:
       start_period: 10s
 
   grafana:
-    image: grafana/grafana:10.1.5
+    image: grafana/grafana:10.4.5
     container_name: snowradar-grafana
     restart: unless-stopped
     user: "472:472"  # grafana user
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeme}
+      # audit #6: no insecure default — compose fails fast if unset in .env
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_SERVER_ROOT_URL=http://localhost:3000
-      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_SERVER_ROOT_URL=${GF_SERVER_ROOT_URL:-http://localhost:3000}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -54,19 +57,22 @@ services:
     depends_on:
       - prometheus
 
-  # Optional: Alertmanager for alerting
   alertmanager:
-    image: prom/alertmanager:v0.26.0
+    image: prom/alertmanager:v0.27.0
     container_name: snowradar-alertmanager
     restart: unless-stopped
     ports:
-      - "9093:9093"
+      - "127.0.0.1:9093:9093"
+    environment:
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
     volumes:
-      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/alertmanager.yml.tmpl:/etc/alertmanager/alertmanager.yml.tmpl:ro
+      - ./alertmanager/render-config.sh:/render-config.sh:ro
       - alertmanager_data:/alertmanager
-    command:
-      - '--config.file=/etc/alertmanager/alertmanager.yml'
-      - '--storage.path=/alertmanager'
+    # audit #7: Alertmanager does not expand ${VAR}; render real config at
+    # startup from the template, then exec the actual binary.
+    entrypoint: ["/bin/sh", "/render-config.sh"]
     profiles:
       - monitoring
 

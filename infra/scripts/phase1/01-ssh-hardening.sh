@@ -14,14 +14,15 @@ log() { echo -e "${GREEN}[+]${NC} $*"; }
 warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[-]${NC} $*"; exit 1; }
 
-# Detect cloud provider
+# Detect cloud provider (audit #21: Hetzner check must come before the
+# catch-all GCP metadata endpoint)
 detect_provider() {
-    if curl -s -H "Authorization: Bearer Oracle" -L http://169.254.169.254/opc/v2/instance/ >/dev/null 2>&1; then
+    if curl -sf --max-time 3 -H "Authorization: Bearer Oracle" -L http://169.254.169.254/opc/v2/instance/ >/dev/null 2>&1; then
         echo "oracle"
-    elif curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/ >/dev/null 2>&1; then
-        echo "gcp"
-    elif curl -s http://169.254.169.254/hetzner/v1/ >/dev/null 2>&1; then
+    elif curl -sf --max-time 3 http://169.254.169.254/hetzner/v1/ >/dev/null 2>&1; then
         echo "hetzner"
+    elif curl -sf --max-time 3 -H "Metadata-Flavor: Google" http://metadata.google.internal/ >/dev/null 2>&1; then
+        echo "gcp"
     else
         echo "unknown"
     fi
@@ -42,26 +43,39 @@ create_admin_user() {
     else
         log "Creating admin user: $ADMIN_USER"
         useradd -m -s /bin/bash -G sudo "$ADMIN_USER"
-        echo "$ADMIN_USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/99-$ADMIN_USER
+        # audit #17: passworded sudo, scoped NOPASSWD for automation-critical
+        # commands only (Ansible in Phase 3 uses these).
+        cat > /etc/sudoers.d/99-$ADMIN_USER <<'SUDOERS'
+snowadmin ALL=(ALL) ALL
+snowadmin ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/systemctl, /usr/sbin/reboot, /usr/bin/ufw, /usr/bin/wg, /usr/bin/awg, /usr/sbin/iptables, /usr/sbin/ip6tables
+SUDOERS
         chmod 440 /etc/sudoers.d/99-$ADMIN_USER
     fi
 }
 
-# Setup SSH keys for admin user
+# Setup SSH keys for admin user — FAIL LOUDLY if none found (audit #9)
 setup_ssh_keys() {
     log "Setting up SSH keys for $ADMIN_USER"
-    mkdir -p /home/$ADMIN_USER/.ssh
-    chmod 700 /home/$ADMIN_USER/.ssh
-
-    # Copy current authorized_keys (from root or ubuntu)
-    if [[ -f /root/.ssh/authorized_keys ]]; then
-        cp /root/.ssh/authorized_keys /home/$ADMIN_USER/.ssh/authorized_keys
-    elif [[ -f /home/ubuntu/.ssh/authorized_keys ]]; then
-        cp /home/ubuntu/.ssh/authorized_keys /home/$ADMIN_USER/.ssh/authorized_keys
+    local src=""
+    if [[ -s /root/.ssh/authorized_keys ]]; then
+        src=/root/.ssh/authorized_keys
+    elif [[ -s /home/ubuntu/.ssh/authorized_keys ]]; then
+        src=/home/ubuntu/.ssh/authorized_keys
     fi
 
+    # With root login and password auth disabled downstream, continuing
+    # without keys would brick the box. Refuse instead.
+    if [[ -z "$src" ]]; then
+        error "No populated authorized_keys found for root or ubuntu. \
+Provide a key before hardening (e.g., place it at /root/.ssh/authorized_keys). Aborting."
+    fi
+
+    mkdir -p /home/$ADMIN_USER/.ssh
+    chmod 700 /home/$ADMIN_USER/.ssh
+    cp "$src" /home/$ADMIN_USER/.ssh/authorized_keys
     chmod 600 /home/$ADMIN_USER/.ssh/authorized_keys
     chown -R $ADMIN_USER:$ADMIN_USER /home/$ADMIN_USER/.ssh
+    log "Copied $(wc -l < /home/$ADMIN_USER/.ssh/authorized_keys) key(s) from $src"
 }
 
 # Harden SSH daemon
@@ -108,11 +122,16 @@ Banner /etc/ssh/banner
 EOF
 
     # Create banner
+    # audit #15: wording must not claim monitoring/logging that contradicts
+    # the zero-log privacy posture. Neutral legal notice only.
+    # PRODUCT/LEGAL DECISION FLAG: final wording needs owner sign-off.
     cat > /etc/ssh/banner <<'EOF'
 **************************************************************
-*                  UNAUTHORIZED ACCESS PROHIBITED            *
-*                    Snow Radar VPN Server                   *
-*         All connections are monitored and logged           *
+*                  AUTHORIZED ACCESS ONLY                    *
+*                                                            *
+*   This system is operated by Snow Radar for the sole       *
+*   purpose of providing VPN network transport.              *
+*   Unauthenticated access attempts are refused.             *
 **************************************************************
 EOF
 

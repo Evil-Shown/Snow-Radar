@@ -61,9 +61,12 @@ main() {
     apt-get upgrade -y -qq
     apt-get install -y -qq \
         wireguard wireguard-tools qrencode \
-        ufw fail2ban curl wget \
+        ufw fail2ban curl wget unattended-upgrades \
         htop iftop iotop \
         ca-certificates gnupg lsb-release jq
+
+    # SECURITY.md claim made real: automatic security updates
+    dpkg-reconfigure -f noninteractive unattended-upgrades
 
     step "2/7: Applying kernel sysctl hardening"
     cp "$SYSCTL_CONF" /etc/sysctl.d/99-snowradar-sysctl.conf
