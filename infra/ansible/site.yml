@@ -1,0 +1,61 @@
+---
+# Snow Radar exit-node provisioning (Phase 3)
+# Reproduces a node from bare metal. Wraps the CANONICAL phase-1 shell scripts
+# so there is exactly one implementation of each step — Ansible orchestrates,
+# the scripts do the work.
+#
+# Usage:
+#   cp inventory.yml.example inventory.yml   # fill IPs
+#   ansible-playbook site.yml --limit sgp
+#
+# Idempotent: safe to re-run. The wrapped scripts no-op or converge.
+
+- name: Provision Snow Radar exit nodes
+  hosts: exit_nodes
+  gather_facts: true
+  become: true
+  vars:
+    infra_dir: "{{ playbook_dir }}/.."
+    # Node identity comes from inventory (sgp|fsn) and selects subnets from ADR-004
+    node_id: "{{ snowradar_node | mandatory }}"
+
+  pre_tasks:
+    - name: Assert an SSH key exists on this controller for provisioning
+      ansible.builtin.stat:
+        path: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519.pub"
+      register: provision_key
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Fail loudly if no provisioning key (audit #9 discipline)
+      ansible.builtin.fail:
+        msg: "No ~/.ssh/id_ed25519.pub on controller — refusing to harden a box we might lock out."
+      when: not provision_key.stat.exists
+      delegate_to: localhost
+      become: false
+
+  roles:
+    - role: common
+    - role: ssh_hardening
+    - role: wireguard
+    - role: amneziawg
+    - role: node_exporter
+
+  post_tasks:
+    - name: Verify wg0 is up
+      ansible.builtin.command: wg show wg0
+      changed_when: false
+      register: wg0_status
+
+    - name: Verify awg0 is up
+      ansible.builtin.command: awg show awg0
+      changed_when: false
+      failed_when: false
+      register: awg0_status
+
+    - name: Report tunnel status
+      ansible.builtin.debug:
+        msg:
+          wg0: "{{ wg0_status.stdout_lines | default(['(no output)']) }}"
+          awg0: "{{ awg0_status.stdout_lines | default(['NOT RUNNING']) }}"

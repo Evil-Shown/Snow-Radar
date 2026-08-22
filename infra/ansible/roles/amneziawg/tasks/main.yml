@@ -1,0 +1,11 @@
+---
+# AmneziaWG stealth tunnel (awg0) — canonical script installs from the
+# fingerprint-pinned Amnezia PPA and configures awg-quick@awg0 (ADR-004).
+- name: Configure awg0
+  ansible.builtin.script:
+    cmd: "{{ infra_dir }}/scripts/phase1/setup-amneziawg.sh {{ node_id }}"
+  register: awg_setup
+
+- name: Confirm awg0 is active
+  ansible.builtin.command: awg show awg0
+  changed_when: false

@@ -1,0 +1,86 @@
+name: infra
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/infra.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/**'
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run shellcheck on all phase scripts
+        run: |
+          find infra/scripts -name '*.sh' -print0 | xargs -0 shellcheck --severity=warning
+
+  yaml-lint:
+    name: yaml lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install yamllint ansible-lint
+      - name: yamllint (compose + ansible + rules)
+        run: |
+          yamllint -d "{extends: default, rules: {line-length: {max: 160}, truthy: check-keys}}" \
+            infra/docker/observability infra/ansible --exclude '*.example' || true
+      - name: ansible syntax check
+        run: |
+          cd infra/ansible
+          cp inventory.yml.example inventory.yml
+          ansible-galaxy collection install community.general >/dev/null
+          ansible-playbook site.yml --syntax-check
+
+  terraform:
+    name: terraform validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.x
+      - name: fmt check
+        run: terraform fmt -check -recursive
+      # No backend/credentials in CI: validate-only. Plan/apply jobs that need
+      # OIDC cloud creds land with the deploy pipeline.
+      - name: init (no backend)
+        run: terraform init -backend=false
+      - name: validate
+        run: terraform validate
+
+  docker-compose:
+    name: compose config check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/docker/observability
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose file (with dummy required env)
+        run: |
+          GRAFANA_ADMIN_PASSWORD=dummy-ci-value \
+            docker compose config --quiet && echo "compose OK"

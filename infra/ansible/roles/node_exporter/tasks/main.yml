@@ -1,0 +1,14 @@
+---
+# Node Exporter bound to the WireGuard IP ONLY (audit #4).
+- name: Install node exporter bound to WG address
+  ansible.builtin.script:
+    cmd: "{{ infra_dir }}/scripts/phase1/05-node-exporter.sh {{ sr_wg_server_ip }}"
+    creates: /usr/local/bin/node_exporter
+
+- name: Verify exporter answers on the WG IP only
+  ansible.builtin.uri:
+    url: "http://{{ sr_wg_server_ip }}:9100/metrics"
+    return_content: false
+  register: metrics
+  retries: 3
+  delay: 5

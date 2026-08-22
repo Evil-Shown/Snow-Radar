@@ -1,0 +1,14 @@
+# Copy to inventory.yml (gitignored) and fill in public IPs from terraform output.
+all:
+  children:
+    exit_nodes:
+      hosts:
+        sgp:
+          ansible_host: <ORACLE_SGP_PUBLIC_IP>
+          snowradar_node: sgp
+          # OCI images log in as 'ubuntu' before hardening creates snowadmin
+          ansible_user: ubuntu
+        fsn:
+          ansible_host: <HETZNER_FSN_PUBLIC_IP>
+          snowradar_node: fsn
+          ansible_user: root   # Hetzner default until hardened

@@ -1,0 +1,10 @@
+---
+# Standard WireGuard tunnel (wg0) — canonical script is the single implementation.
+- name: Configure wg0
+  ansible.builtin.script:
+    cmd: "{{ infra_dir }}/scripts/phase1/setup-wireguard.sh {{ node_id }}"
+  register: wg_setup
+
+- name: Confirm wg0 handshake listener is active
+  ansible.builtin.command: wg show wg0
+  changed_when: false

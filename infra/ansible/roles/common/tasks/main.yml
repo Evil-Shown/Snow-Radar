@@ -1,0 +1,113 @@
+---
+# Parses infra/configs/subnets.env (single source of truth, ADR-004) into
+# host facts so every downstream role uses identical addressing.
+
+- name: Read canonical subnet config
+  ansible.builtin.slurp:
+    src: "{{ infra_dir }}/configs/subnets.env"
+  delegate_to: localhost
+  become: false
+  register: subnets_raw
+
+- name: Parse subnet config into facts
+  ansible.builtin.set_fact:
+    sr: >-
+      {%- set d = {} -%}
+      {%- for line in (subnets_raw.content | b64decode).split('\n') -%}
+      {%- if line and not line.startswith('#') and '=' in line -%}
+      {%- set kv = line.split('=', 1) -%}
+      {%- set _ = d.update({kv[0].strip(): kv[1].strip() | trim('"')}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ d }}
+
+- name: Export per-node addressing
+  ansible.builtin.set_fact:
+    sr_wg_port: "{{ sr.WG_PORT }}"
+    sr_awg_port: "{{ sr.AWG_PORT }}"
+    sr_wg_server_ip: "{{ sr[node_id ~ '_WG_SERVER_V4'] }}"
+
+- name: Show resolved addressing for this node
+  ansible.builtin.debug:
+    msg: "node={{ node_id }} wg_port={{ sr_wg_port }} awg_port={{ sr_awg_port }} wg_server_ip={{ sr_wg_server_ip }}"
+
+- name: Base packages
+  ansible.builtin.apt:
+    name:
+      - wireguard
+      - wireguard-tools
+      - qrencode
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - curl
+      - gnupg
+      - lsb-release
+      - jq
+    state: present
+    update_cache: true
+
+- name: Enable automatic security updates
+  ansible.builtin.copy:
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    mode: "0644"
+
+- name: Apply kernel hardening sysctl file
+  ansible.builtin.copy:
+    src: "{{ infra_dir }}/configs/99-snowradar-sysctl.conf"
+    dest: /etc/sysctl.d/99-snowradar-sysctl.conf
+    mode: "0644"
+  notify: reload sysctl
+
+- name: UFW default deny incoming
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: UFW allow SSH
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+    comment: SSH
+
+- name: UFW allow WireGuard port
+  community.general.ufw:
+    rule: allow
+    port: "{{ sr_wg_port }}"
+    proto: udp
+    comment: WireGuard
+
+- name: UFW allow AmneziaWG stealth port
+  community.general.ufw:
+    rule: allow
+    port: "{{ sr_awg_port }}"
+    proto: udp
+    comment: AmneziaWG
+
+- name: Ensure Node Exporter has NO public firewall hole (audit #4)
+  community.general.ufw:
+    rule: allow
+    port: "9100"
+    delete: true
+  failed_when: false
+
+- name: fail2ban sshd jail enabled
+  ansible.builtin.copy:
+    content: |
+      [sshd]
+      enabled = true
+      maxretry = 3
+      bantime = 3600
+      findtime = 600
+      backend = systemd
+    dest: /etc/fail2ban/jail.d/snowradar.conf
+    mode: "0644"
+  notify: restart fail2ban
+
+- name: UFW enabled
+  community.general.ufw:
+    state: enabled

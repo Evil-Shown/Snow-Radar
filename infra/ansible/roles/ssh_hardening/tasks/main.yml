@@ -1,0 +1,70 @@
+---
+# SSH hardening — mirrors infra/scripts/phase1/01-ssh-hardening.sh policy.
+# Kept in native Ansible (not wrapped) because user/sshd changes must be
+# transactional and verifiable, not best-effort shell.
+
+- name: Admin user exists
+  ansible.builtin.user:
+    name: snowadmin
+    shell: /bin/bash
+    groups: sudo
+    append: true
+
+- name: Scoped sudoers (audit #17 — no blanket NOPASSWD)
+  ansible.builtin.copy:
+    content: |
+      snowadmin ALL=(ALL) ALL
+      snowadmin ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/systemctl, /usr/sbin/reboot, /usr/bin/ufw, /usr/bin/wg, /usr/bin/awg, /usr/sbin/iptables, /usr/sbin/ip6tables
+    dest: /etc/sudoers.d/99-snowadmin
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Preserve current authorized keys
+  ansible.builtin.command: cat /home/{{ ansible_user }}/.ssh/authorized_keys
+  register: current_keys
+  changed_when: false
+  failed_when: false
+
+- name: Fail loudly if no source keys (audit #9)
+  ansible.builtin.fail:
+    msg: "No authorized_keys found for {{ ansible_user }}; refusing to disable root/password auth."
+  when: current_keys.rc != 0 or current_keys.stdout | trim | length == 0
+
+- name: Install keys for snowadmin
+  ansible.builtin.copy:
+    content: "{{ current_keys.stdout }}"
+    dest: /home/snowadmin/.ssh/authorized_keys
+    mode: "0600"
+    owner: snowadmin
+    group: snowadmin
+
+- name: Hardened sshd config
+  ansible.builtin.copy:
+    content: |
+      Port 22
+      Protocol 2
+      PermitRootLogin no
+      PubkeyAuthentication yes
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      UsePAM yes
+      KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org
+      Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
+      MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com
+      MaxAuthTries 3
+      MaxSessions 2
+      LoginGraceTime 30
+      AllowUsers snowadmin
+      AllowAgentForwarding no
+      AllowTcpForwarding no
+      X11Forwarding no
+      PermitTunnel no
+    dest: /etc/ssh/sshd_config.d/99-snowradar-hardening.conf
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: restart sshd
+
+- name: sshd restarted
+  ansible.builtin.systemd:
+    name: ssh
+    state: restarted
