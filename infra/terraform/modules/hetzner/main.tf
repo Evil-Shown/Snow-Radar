@@ -59,4 +59,8 @@ resource "hcloud_server" "snow_radar" {
     ipv4_enabled = true
     ipv6_enabled = true
   }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }

@@ -17,6 +17,10 @@ resource "oci_core_vcn" "snow_radar" {
   cidr_block     = var.vcn_cidr
   display_name   = "${var.instance_name}-vcn"
   dns_label      = "snowradar"
+  # NOTE (audit #22): OCI public IPv6 requires an Oracle-GIA-assigned /56
+  # requested manually in the console first. Until then this VCN is IPv4-only;
+  # docs must not claim dual-stack egress on the SGP node. Tunnel-internal
+  # ULA addressing still applies (see infra/configs/subnets.env).
 }
 
 resource "oci_core_internet_gateway" "snow_radar" {
@@ -133,4 +137,10 @@ resource "oci_core_instance" "snow_radar" {
   }
 
   is_pv_encryption_in_transit_enabled = true
+
+  lifecycle {
+    # Exit nodes hold live WireGuard peer state; accidental destroy = outage
+    # for every connected user. Deletion must be an explicit, documented act.
+    prevent_destroy = true
+  }
 }

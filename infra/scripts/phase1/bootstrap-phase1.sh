@@ -3,9 +3,9 @@
 # Run as root on BOTH Oracle (SGP) and Hetzner (FSN) servers.
 #
 # Fix history (audit #5): previous version called ./scripts/setup-wireguard.sh
-# relative to this file's directory, but the setup scripts live in
-# infra/scripts/phase1/. All paths are now resolved from this script's real
-# location and all addressing comes from infra/configs/subnets.env (ADR-004).
+# relative to this file's directory, but the setup scripts live elsewhere.
+# All scripts were consolidated into infra/scripts/phase1/ (one canonical tree)
+# and all addressing comes from infra/configs/subnets.env (ADR-004).
 
 set -euo pipefail
 
@@ -16,11 +16,13 @@ error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 step() { echo -e "${BLUE}[STEP]${NC} $*"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_INFRA_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CANONICAL_SCRIPTS="${REPO_INFRA_DIR}/scripts/phase1"
+REPO_INFRA_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+CANONICAL_SCRIPTS="${SCRIPT_DIR}"
 SUBNETS_FILE="${REPO_INFRA_DIR}/configs/subnets.env"
+SYSCTL_CONF="${REPO_INFRA_DIR}/configs/99-snowradar-sysctl.conf"
 
 [[ -f "$SUBNETS_FILE" ]] || error "Canonical subnet config missing: $SUBNETS_FILE"
+[[ -f "$SYSCTL_CONF" ]] || error "Sysctl config missing: $SYSCTL_CONF"
 [[ -f "${CANONICAL_SCRIPTS}/setup-wireguard.sh" ]] || error "setup-wireguard.sh not found in $CANONICAL_SCRIPTS"
 [[ -f "${CANONICAL_SCRIPTS}/setup-amneziawg.sh" ]] || error "setup-amneziawg.sh not found in $CANONICAL_SCRIPTS"
 
@@ -64,15 +66,11 @@ main() {
         ca-certificates gnupg lsb-release jq
 
     step "2/7: Applying kernel sysctl hardening"
-    SYSCTL_CONF="$(ls "${SCRIPT_DIR}/configs/"99-snowradar-sysctl.conf "${REPO_INFRA_DIR}/phase1/configs/"99-snowradar-sysctl.conf 2>/dev/null | head -1)"
-    [[ -n "$SYSCTL_CONF" ]] || error "sysctl config not found"
     cp "$SYSCTL_CONF" /etc/sysctl.d/99-snowradar-sysctl.conf
     sysctl --system
 
     step "3/7: Hardening SSH"
-    SSH_HARDENING="$(ls "${SCRIPT_DIR}/scripts/"01-ssh-hardening.sh "${CANONICAL_SCRIPTS}/"01-ssh-hardening.sh 2>/dev/null | head -1)"
-    [[ -n "$SSH_HARDENING" ]] || error "SSH hardening script not found"
-    bash "$SSH_HARDENING"
+    bash "${CANONICAL_SCRIPTS}/01-ssh-hardening.sh"
 
     step "4/7: Setting up WireGuard (wg0)"
     bash "${CANONICAL_SCRIPTS}/setup-wireguard.sh" "$NODE" "$SERVER_IPV4" ""

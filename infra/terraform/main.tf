@@ -12,7 +12,10 @@ terraform {
     }
   }
 
-  backend "local" {}
+  # Partial remote backend (ADR-005). Configure via:
+  #   terraform init -reconfigure -backend-config=backend.hcl
+  # Credentials via environment only — never tfvars, never this file.
+  backend "s3" {}
 }
 
 provider "oci" {

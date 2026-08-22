@@ -1,0 +1,15 @@
+# Remote state backend config — copy to backend.hcl (gitignored) and fill in.
+# Apply with:  terraform init -reconfigure -backend-config=backend.hcl
+# See docs/adr/005-remote-state-secrets.md
+#
+# Any S3-compatible bucket works (AWS S3, Cloudflare R2, Minio).
+# Bucket prerequisites: versioning ON, SSE encryption ON, public access blocked.
+
+bucket       = "snowradar-tfstate"
+key          = "infra/terraform.tfstate"
+region       = "auto"                    # "us-east-1" for AWS, "auto" for R2
+endpoint     = "https://<accountid>.r2.cloudflarestorage.com"  # omit for AWS
+use_lockfile = true                      # S3 native locking (Terraform >=1.10)
+
+# Credentials are NOT set here. Use standard environment variables:
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (scoped to the state bucket only)

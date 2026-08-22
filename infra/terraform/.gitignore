@@ -16,3 +16,4 @@ terraform.rc
 !*.tfvars.example.json
 tfplan
 *.plan
+backend.hcl
