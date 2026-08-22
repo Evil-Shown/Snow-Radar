@@ -19,19 +19,21 @@ scrape_configs:
       - targets: ['localhost:9090']
 
   # Node Exporter on VPN servers
+  # SECURITY (audit #4/#14): exporters bind ONLY to WireGuard IPs (ADR-004).
+  # Scraping requires the monitoring host to be inside the VPN mesh.
   - job_name: 'node-exporter-vpn'
     metrics_path: /metrics
     scheme: http
     static_configs:
-      # Oracle Cloud Singapore (ARM)
-      - targets: ['<ORACLE_SGP_IP>:9100']
+      # Oracle Cloud Singapore (ARM) — wg0 server IP
+      - targets: ['10.20.0.1:9100']
         labels:
           instance: 'sgp-arm'
           region: 'apac'
           provider: 'oracle'
           arch: 'arm64'
-      # Hetzner Falkenstein (x86)
-      - targets: ['<HETZNER_FSN_IP>:9100']
+      # Hetzner Falkenstein (x86) — wg0 server IP
+      - targets: ['10.21.0.1:9100']
         labels:
           instance: 'fsn-x86'
           region: 'eu'
@@ -42,9 +44,7 @@ scrape_configs:
   - job_name: 'wireguard-interfaces'
     metrics_path: /metrics
     static_configs:
-      - targets: ['<ORACLE_SGP_IP>:9100', '<HETZNER_FSN_IP>:9100']
-        labels:
-          __metrics_path__: /metrics
+      - targets: ['10.20.0.1:9595', '10.21.0.1:9595']
 
 # Remote write for long-term storage (optional, for future)
 # remote_write:

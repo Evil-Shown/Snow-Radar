@@ -34,7 +34,15 @@ resource "hcloud_firewall" "snow_radar" {
   rule {
     direction  = "in"
     protocol   = "udp"
-    port       = "51820"
+    port       = tostring(var.wg_port)
+    source_ips = ["0.0.0.0/0", "::/0"]
+  }
+
+  # AmneziaWG stealth tunnel (ADR-004)
+  rule {
+    direction  = "in"
+    protocol   = "udp"
+    port       = tostring(var.awg_port)
     source_ips = ["0.0.0.0/0", "::/0"]
   }
 }

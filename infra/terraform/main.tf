@@ -41,6 +41,10 @@ module "oracle_sgp" {
   ocpu_count          = 2
   memory_gb           = 12
   boot_volume_gb      = 50
+
+  # Must mirror infra/configs/subnets.env (ADR-004)
+  wg_port  = 51820
+  awg_port = 51821
 }
 
 module "hetzner_fsn" {
@@ -50,4 +54,8 @@ module "hetzner_fsn" {
   server_type   = "cx22"
   location      = "fsn1"
   ssh_public_key = var.ssh_public_key
+
+  # Must mirror infra/configs/subnets.env (ADR-004)
+  wg_port  = 51820
+  awg_port = 51821
 }

@@ -79,8 +79,18 @@ resource "oci_core_security_list" "snow_radar" {
     protocol = "17"
     source   = "0.0.0.0/0"
     udp_options {
-      min = 51820
-      max = 51820
+      min = var.wg_port
+      max = var.wg_port
+    }
+  }
+
+  # AmneziaWG stealth tunnel (ADR-004)
+  ingress_security_rules {
+    protocol = "17"
+    source   = "0.0.0.0/0"
+    udp_options {
+      min = var.awg_port
+      max = var.awg_port
     }
   }
 }
