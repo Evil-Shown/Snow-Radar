@@ -1,9 +1,13 @@
 # PROGRESS.md — institutional memory
 
-> Updated every session. Status legend: ✅ done (with evidence) | 🔶 code-complete, needs manual verification on real infra | ⬜ not started
-
 ## Current phase
-Phase 0 complete (code-level). Phases 1–7 in progress this session.
+Phases 0–5 code-complete + zero-trust self-audit executed (16 findings closed, commit f0b6012).
+
+## Verification status (honest evidence policy)
+- Shell scripts: `bash -n` / `sh -n` clean ✅
+- Go/Dart: NO local toolchains — compile+tests run first time in CI (`api.yml`, add client.yml) 🔶
+- Terraform: validate requires `terraform init` — not runnable here 🔶
+- Live deploy (Oracle/Hetzner), real WG/AWG handshakes, PayHere/Paddle sandbox round-trip: NOT DONE — needs human with cloud accounts ⬜
 
 ## Phase 0 — Stop the bleeding (audit #1–5)
 
