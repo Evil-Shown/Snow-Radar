@@ -4,13 +4,14 @@
 
 ## Status: ALL MACHINE-SIDE WORK COMPLETE
 Phases 0–5 code-complete. Zero-trust audit executed (22 findings closed).
-Everything verifiable on this machine is verified with command output.
+API surface now COMPLETE: signup/login/refresh/logout, connect, peer list/revoke,
+billing checkout, both payment webhooks. Session state DB-persistent.
 
 ## Verification evidence (this machine)
 | Check | Evidence |
 |---|---|
-| Go build/vet | BUILD_OK / VET_OK (go1.22.6 → go.mod 1.25) |
-| Go tests | `go test ./... -race -count=1` ALL PASS, 5 packages |
+| Go build/vet | BUILD_OK / VET_OK |
+| Go tests | `go test ./... -race -count=1` ALL PASS, 5 packages (incl. ownership + replay tests) |
 | Terraform | fmt clean; `validate` = "configuration is valid" (v1.9.8); init OK |
 | Shell | bash -n / sh -n clean on all phase scripts |
 | Secret history | pattern scan clean; gitleaks in CI |
@@ -28,15 +29,14 @@ Everything verifiable on this machine is verified with command output.
    ```
 3. **Terraform apply**: create backend.hcl + TF_VAR_* env per docs/adr/005-remote-state-secrets.md → `terraform init -reconfigure -backend-config=backend.hcl && terraform apply`
 4. **End-to-end tunnels**: client config from setup scripts → connect SGP+FSN, standard+stealth; verify public IP change; Android kill-switch test
-5. **Postgres integration**: `docker compose up postgres` in a compose file (TODO: add one for dev DB) → run migrations/001_init.sql → API smoke test with DATABASE_URL
-6. **Billing sandbox**: PayHere + Paddle sandboxes; mint checkout via API → pay → webhook → subscription=active → /connect succeeds
+5. **Postgres integration**: `docker compose -f api/dev/docker-compose.yml up -d` → then
+   `TEST_DATABASE_URL='postgres://snowradar:devonly-not-a-secret@127.0.0.1:54329/snowradar' go test -tags integration ./internal/store/ -v`
+6. **Billing sandbox**: PayHere + Paddle sandboxes; POST /billing/checkout → attach token to checkout → webhook → subscription=active → /connect succeeds
 
 ## Known residuals (tracked)
-- B1: allocator persistence now backed by Postgres store (written, needs integration test)
 - B3: rate limiter still in-memory single-instance (Redis version when >1 replica)
-- B4: alertmanager behind compose profile 'monitoring' — prometheus targets it by default
-- Dev DB compose file not yet added (step 5 above)
-- iOS/Android native configs for client not yet created (flutter create scaffolding)
+- iOS/Android native configs for client not yet created (`flutter create .` in client/)
+- API integration test (HTTP-level, httptest) not yet written; unit tests cover service logic
 
 ## Commit history this effort
 e0743a4 Phase 0 · d78d00f Phase 1 · e58c082 Phase 2 · df9c35c Phase 3 ·
