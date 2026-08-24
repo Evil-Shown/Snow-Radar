@@ -53,9 +53,9 @@ module "oracle_sgp" {
 module "hetzner_fsn" {
   source = "./modules/hetzner"
 
-  server_name   = "snow-radar-fsn"
-  server_type   = "cx22"
-  location      = "fsn1"
+  server_name    = "snow-radar-fsn"
+  server_type    = "cx22"
+  location       = "fsn1"
   ssh_public_key = var.ssh_public_key
 
   # Must mirror infra/configs/subnets.env (ADR-004)

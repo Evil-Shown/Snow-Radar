@@ -1,3 +1,12 @@
+terraform {
+  required_version = ">= 1.6.0"
+  required_providers {
+    oci = {
+      source = "oracle/oci"
+    }
+  }
+}
+
 data "oci_identity_availability_domains" "ads" {
   compartment_id = var.compartment_id
 }

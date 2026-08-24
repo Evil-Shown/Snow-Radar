@@ -1,3 +1,12 @@
+terraform {
+  required_version = ">= 1.6.0"
+  required_providers {
+    hcloud = {
+      source = "hetznercloud/hcloud"
+    }
+  }
+}
+
 data "hcloud_image" "ubuntu_2204" {
   name = "ubuntu-22.04"
 }
@@ -36,11 +45,11 @@ resource "hcloud_firewall" "snow_radar" {
 }
 
 resource "hcloud_server" "snow_radar" {
-  name        = var.server_name
-  server_type = var.server_type
-  location    = var.location
-  image       = data.hcloud_image.ubuntu_2204.id
-  ssh_keys    = [hcloud_ssh_key.snow_radar.id]
+  name         = var.server_name
+  server_type  = var.server_type
+  location     = var.location
+  image        = data.hcloud_image.ubuntu_2204.id
+  ssh_keys     = [hcloud_ssh_key.snow_radar.id]
   firewall_ids = [hcloud_firewall.snow_radar.id]
 
   public_net {

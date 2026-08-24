@@ -63,8 +63,8 @@ We will:
 ### Key Management
 - **Server keys**: Generated at deploy, stored in `/etc/wireguard/`, rotated quarterly via Ansible
 - **Client keys**: Generated on device, private key never leaves Secure Enclave/Keystore/TPM
-- **API keys**: RS256 JWT, 15min access + 30d refresh, stored hashed in PostgreSQL
-- **Database**: Encrypted at rest (PostgreSQL TDE), TLS in transit
+- **API keys**: RS256 JWT, 15min access + rotating refresh tokens (jti-tracked, replay-revoking)
+- **Database**: TLS in transit; at-rest encryption via provider volume encryption (application-level encryption: planned)
 
 ---
 
@@ -136,9 +136,11 @@ We will:
 
 ## Incident Response
 
-### Runbooks (docs/operations/)
-| Scenario | Runbook |
-|----------|---------|
+### Runbooks
+> **STATUS: PLANNED — none of these exist yet.** They must be written before alpha launch.
+
+| Scenario | Planned runbook |
+|----------|----------------|
 | Exit node compromise | `INCIDENT_EXIT_NODE_COMPROMISE.md` |
 | Control plane breach | `INCIDENT_API_BREACH.md` |
 | Key material leak | `INCIDENT_KEY_LEAK.md` |
@@ -146,8 +148,8 @@ We will:
 | Legal request | `INCIDENT_LEGAL_REQUEST.md` |
 
 ### Communication
-- **Internal**: `#incidents` Discord channel, PagerDuty for critical
-- **External**: Status page (status.snowradar.app), email to affected users
+- **Internal**: `#incidents` channel (to be created), on-call rotation TBD
+- **External**: Status page (planned), email to affected users
 - **Postmortem**: Blameless, published within 5 business days
 
 ---
@@ -162,21 +164,24 @@ We will:
 
 ## Bug Bounty
 
-| Severity | Reward |
-|----------|--------|
+> **STATUS: NOT FUNDED.** Amounts below are aspirational targets only.
+> Do not report bugs expecting payment until this section is updated with
+> a live program link and funding confirmation.
+
+| Severity | Target reward |
+|----------|--------------|
 | Critical | $2,000 |
 | High | $1,000 |
 | Medium | $500 |
 | Low | $100 |
 
-**Scope**: `*.snowradar.app`, `snowradar-api`, `snowradar-client`, `snowradar-infra`
+**Planned scope**: `*.snowradar.app`, `snowradar-api`, `snowradar-client`, `snowradar-infra`
 **Exclusions**: Social engineering, physical attacks, DoS, issues in third-party services
-**Payment**: Via GitHub Sponsors or wire transfer (W-9/W-8BEN required)
 
 ---
 
 ## Contact
 
-- **Security**: security@snowradar.app (PGP: `0xDEADBEEFCAFEBABE`)
+- **Security**: security@snowradar.app (PGP key: **to be published** — a real fingerprint will replace this note before alpha; never trust a placeholder key)
 - **General**: hello@snowradar.app
 - **Legal**: legal@snowradar.app

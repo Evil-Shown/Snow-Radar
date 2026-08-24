@@ -6,8 +6,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0%20%2F%20MIT-blue.svg)](LICENSE)
 [![API Build](https://img.shields.io/github/actions/workflow/status/Evil-Shown/Snow-Radar/api.yml?branch=main&label=API%20Build)](https://github.com/Evil-Shown/Snow-Radar/actions/workflows/api.yml)
 [![Client Build](https://img.shields.io/github/actions/workflow/status/Evil-Shown/Snow-Radar/client.yml?branch=main&label=Client%20Build)](https://github.com/Evil-Shown/Snow-Radar/actions/workflows/client.yml)
-[![Security](https://img.shields.io/badge/Security-Audit%20Passed-brightgreen)](SECURITY.md)
-[![Docs](https://img.shields.io/badge/Docs-Live-brightgreen)](https://snowradar.app/docs)
+[![Infra Checks](https://img.shields.io/github/actions/workflow/status/Evil-Shown/Snow-Radar/infra.yml?branch=main&label=Infra%20Checks)](https://github.com/Evil-Shown/Snow-Radar/actions/workflows/infra.yml)
 
 > **Privacy-first VPN platform** with censorship-resistant exit nodes in Singapore and Germany. Built on WireGuard + AmneziaWG, orchestrated by a Go control plane, delivered via Flutter apps.
 
@@ -164,22 +163,24 @@ flutter build apk --release --split-per-abi
 |----------|-----------|
 | **Architecture** | [ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) — System diagram, components, data flows |
 | **Implementation** | [IMPLEMENTATION_GUIDE.md](docs/implementation/IMPLEMENTATION_GUIDE.md) — Phase tasks, code structure, acceptance criteria |
-| **Setup** | [SETUP.md](docs/setup/SETUP.md) — Step-by-step commands for all phases |
-| **ADRs** | [adr/](docs/adr/) — 000-template, 001-go-flutter, 002-wireguard-amneziawg, 003-oracle-hetzner |
-| **Operations** | [GITHUB_SETUP.md](docs/setup/GITHUB_CLOUD_SETUP.md), [HARDENING_CHECKLIST.md](docs/operations/HARDENING_CHECKLIST.md) |
-| **Development** | [API_SPEC.md](docs/development/API_SPEC.md), [CLIENT_ARCH.md](docs/development/CLIENT_ARCH.md) |
-| **Legal** | [PRIVACY_POLICY.md](docs/legal/PRIVACY_POLICY.md), [AUP.md](docs/legal/AUP.md) |
+| **Setup** | [SETUP.md](docs/implementation/SETUP.md), [GITHUB_CLOUD_SETUP.md](docs/setup/GITHUB_CLOUD_SETUP.md) |
+| **ADRs** | [adr/](docs/adr/) — 000-template, 001-go-flutter, 001-multi-provider-infrastructure, 002-wireguard-amneziawg, 003-oracle-hetzner, 004-unified-subnet-scheme, 005-remote-state-secrets |
+| **Security** | [SECURITY.md](SECURITY.md) — Threat model, disclosure policy |
+
+> **Planned but not yet written** (links intentionally omitted until they exist):
+> API_SPEC, CLIENT_ARCH, PRIVACY_POLICY, AUP, HARDENING_CHECKLIST, incident runbooks.
+> This README does not link to documents that don't exist.
 
 ---
 
 ## Security
 
 - **Threat Model**: [SECURITY.md](SECURITY.md#threat-model)
-- **Server Hardening**: Ansible playbooks, UFW, sysctl, fail2ban, auditd
-- **Client Security**: Keystore/Keychain, kill switch, no cleartext traffic
-- **Supply Chain**: govulncheck, dependabot, cosign, SLSA L3 target
-- **Incident Response**: Playbooks, runbooks, public postmortems
-- **Reporting**: security@snowradar.app (PGP: [security.asc](https://snowradar.app/security.asc))
+- **Server Hardening**: Ansible playbooks, UFW, sysctl, fail2ban
+- **Client Security**: Keystore/Keychain, kill switch, enforced certificate pinning
+- **Supply Chain**: gitleaks + govulncheck + Trivy in CI; cosign/SLSA are *targets*, not yet implemented
+- **Incident Response**: runbooks planned (see SECURITY.md status table)
+- **Reporting**: security@snowradar.app (PGP key: to be published before alpha)
 
 ---
 
@@ -187,9 +188,8 @@ flutter build apk --release --split-per-abi
 
 We welcome contributions! Please read:
 
-1. [Code of Conduct](CODE_OF_CONDUCT.md)
-2. [Contributing Guide](CONTRIBUTING.md) — PR process, commit style, testing
-3. [Security Policy](SECURITY.md) — Vulnerability disclosure
+1. [Contributing Guide](CONTRIBUTING.md) — PR process, commit style, testing
+2. [Security Policy](SECURITY.md) — Vulnerability disclosure
 
 ### Development Setup
 ```bash
@@ -241,12 +241,11 @@ See [LICENSE](LICENSE) and [LICENSE-CLIENT](LICENSE-CLIENT) for full text.
 
 ## Links
 
-- **Website**: https://snowradar.app (coming soon)
-- **Documentation**: https://docs.snowradar.app
-- **Status Page**: https://status.snowradar.app
-- **Devlogs**: https://blog.snowradar.app
-- **Discord**: https://discord.gg/snowradar
-- **Twitter**: https://twitter.com/snowradarvpn
+> **All of the following are PLANNED — domains/services not yet live:**
+> - Website: snowradar.app · Docs: docs.snowradar.app · Status: status.snowradar.app
+> - Devlogs: blog.snowradar.app · Discord · Twitter
+
+- **Repository**: https://github.com/Evil-Shown/Snow-Radar
 
 ---
 
