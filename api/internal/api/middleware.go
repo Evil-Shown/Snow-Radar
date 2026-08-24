@@ -1,13 +1,13 @@
 package api
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/evil-shown/snow-radar/api/internal/store"
 )
 
 // ---- Rate limiting (audit finding #3) ----
@@ -82,63 +82,27 @@ func (s *Server) bodyLimit(maxBytes int64) gin.HandlerFunc {
 }
 
 // ---- Refresh token rotation (audit finding #2) ----
+//
+// Session state is persisted through store.Store (jti rows), so rotation and
+// revocation survive process restarts. Consume is atomic at the DB level;
+// replay burns the whole family for that user.
 
-type refreshRecord struct {
-	userID   string
-	consumed bool
+type sessionManager struct {
+	st store.Store
 }
 
-type refreshStore struct {
-	mu      sync.Mutex
-	active  map[string]*refreshRecord // jti -> record
+func newSessionManager(st store.Store) *sessionManager {
+	return &sessionManager{st: st}
 }
 
-func newRefreshStore() *refreshStore {
-	return &refreshStore{active: map[string]*refreshRecord{}}
+func (m *sessionManager) issue(jti, userID string) error {
+	return m.st.SaveRefreshToken(jti, userID)
 }
 
-func newJTI() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+func (m *sessionManager) consume(jti string) (string, error) {
+	return m.st.ConsumeRefreshToken(jti)
 }
 
-func (r *refreshStore) issue(jti, userID string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.active[jti] = &refreshRecord{userID: userID}
-}
-
-// consume returns the record only if jti exists AND was never consumed.
-// A replayed (already-consumed) refresh token revokes the whole family —
-// standard stolen-token-response policy.
-func (r *refreshStore) consume(jti string) (*refreshRecord, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	rec, ok := r.active[jti]
-	if !ok {
-		return nil, false
-	}
-	if rec.consumed {
-		// Replay detected: burn every outstanding token for this user.
-		for _, other := range r.active {
-			if other.userID == rec.userID {
-				other.consumed = true
-			}
-		}
-		return nil, false
-	}
-	rec.consumed = true
-	cp := *rec
-	return &cp, true
-}
-
-func (r *refreshStore) revokeAllFor(userID string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, rec := range r.active {
-		if rec.userID == userID {
-			rec.consumed = true
-		}
-	}
+func (m *sessionManager) revokeAllFor(userID string) error {
+	return m.st.RevokeAllRefreshTokens(userID)
 }

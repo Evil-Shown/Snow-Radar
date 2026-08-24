@@ -1,0 +1,21 @@
+version: '3.8'
+
+# Dev-only Postgres for API integration testing. NEVER use these credentials
+# outside a local machine.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: snowradar-dev-db
+    environment:
+      POSTGRES_USER: snowradar
+      POSTGRES_PASSWORD: devonly-not-a-secret
+      POSTGRES_DB: snowradar
+    ports:
+      - "127.0.0.1:54329:5432"
+    volumes:
+      - ../migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snowradar"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

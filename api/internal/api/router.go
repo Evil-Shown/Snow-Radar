@@ -2,7 +2,9 @@
 package api
 
 import (
+	"crypto/rand"
 	"crypto/rsa"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
@@ -28,6 +30,7 @@ type Config struct {
 	JWTPrivateKey   *rsa.PrivateKey
 	PaddleSecret    string
 	PayHereSecret   string
+	CheckoutSecret  string // HMAC key for signed checkout sessions
 	SGPWgPublicKey  string
 	SGPAwgPublicKey string
 	FSNWgPublicKey  string
@@ -35,12 +38,13 @@ type Config struct {
 }
 
 type Server struct {
-	cfg     Config
-	store   store.Store
-	issuer  *auth.TokenIssuer
-	peers   *peer.Service
-	refreshTokens *refreshStore
-	limiter *rateLimiter
+	cfg           Config
+	store         store.Store
+	issuer        *auth.TokenIssuer
+	peers         *peer.Service
+	refreshTokens *sessionManager
+	checkout      *billing.CheckoutService
+	limiter       *rateLimiter
 }
 
 // NewServer wires the full dependency graph ONCE at startup.
@@ -50,11 +54,12 @@ type Server struct {
 // different peers. Long-lived singletons are mandatory here.
 func NewServer(cfg Config, st store.Store, issuer *auth.TokenIssuer) (*Server, error) {
 	s := &Server{
-		cfg:     cfg,
-		store:   st,
-		issuer:  issuer,
-		refreshTokens: newRefreshStore(),
-		limiter: newRateLimiter(),
+		cfg:           cfg,
+		store:         st,
+		issuer:        issuer,
+		refreshTokens: newSessionManager(st),
+		checkout:      billing.NewCheckoutService([]byte(cfg.CheckoutSecret)),
+		limiter:       newRateLimiter(),
 	}
 	pubKeys := map[string]string{
 		"sgp": cfg.SGPWgPublicKey,
@@ -93,8 +98,17 @@ func NewRouter(cfg Config, st store.Store, issuer *auth.TokenIssuer) (http.Handl
 	authed := v1.Group("/", s.requireAuth())
 	authed.POST("/connect", s.connect)
 	authed.GET("/peers", s.listPeers)
+	authed.DELETE("/peers/:id", s.revokePeer)
+	authed.POST("/billing/checkout", s.checkoutSession)
+	authed.POST("/auth/logout", s.logout)
 
 	return g, nil
+}
+
+func newJTI() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 type credentials struct {
@@ -129,7 +143,9 @@ func (s *Server) issueTokenPair(userID string) (access, refresh string, err erro
 	if refresh, err = s.issuer.Issue(userID, auth.TokenRefresh, jti); err != nil {
 		return "", "", err
 	}
-	s.refreshTokens.issue(jti, userID) // trackable + revocable from now on
+	if err := s.refreshTokens.issue(jti, userID); err != nil {
+		return "", "", err
+	}
 	return access, refresh, nil
 }
 
@@ -170,8 +186,8 @@ func (s *Server) refresh(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 		return
 	}
-	rec, ok := s.refreshTokens.consume(claims.ID)
-	if !ok || rec.userID != claims.UserID {
+	userID, err := s.refreshTokens.consume(claims.ID)
+	if err != nil || userID != claims.UserID {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "token revoked or replayed"})
 		return
 	}
@@ -210,7 +226,7 @@ type connectRequest struct {
 func (s *Server) connect(c *gin.Context) {
 	var req connectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "node_id must be sgp|fsn; public_key required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "node_id must be sgp|fsn; public_key required"})
 		return
 	}
 	userID := c.GetString("user_id")
@@ -238,12 +254,12 @@ func (s *Server) connect(c *gin.Context) {
 		}
 		return
 	}
-	c.JSON(200, gin.H{"peer_id": p.ID, "address": p.Address.String(), "config": clientCfg})
+	c.JSON(http.StatusOK, gin.H{"peer_id": p.ID, "address": p.Address.String(), "config": clientCfg})
 }
 
 func (s *Server) listPeers(c *gin.Context) {
 	peers, _ := s.store.PeersByUser(c.GetString("user_id"))
-	c.JSON(200, peers)
+	c.JSON(http.StatusOK, peers)
 }
 
 func (s *Server) paddleWebhook(c *gin.Context) {
@@ -266,9 +282,8 @@ func (s *Server) paddleWebhook(c *gin.Context) {
 		return
 	}
 
-	// AUDIT FINDING #5 + residual B-webhook: the webhook NEVER trusts a
-	// provider-controlled user identifier. Identity comes exclusively from
-	// verifying our signed checkout session (billing.CheckoutService).
+	// Identity comes exclusively from verifying our signed checkout session;
+	// the provider-controlled user identifier is never trusted.
 	checkout := billing.NewCheckoutService([]byte(s.cfg.PaddleSecret))
 	userID, err := checkout.Verify(ev.CheckoutToken)
 	if err != nil {
@@ -340,3 +355,57 @@ func (s *Server) payHereWebhook(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
+
+// checkoutSession mints a short-lived signed token binding THIS user to the
+// upcoming payment. The client attaches it to the provider checkout
+// (custom_data.checkout_token / custom_1); our webhook verifies OUR
+// signature - never a provider-supplied user id.
+func (s *Server) checkoutSession(c *gin.Context) {
+	var req struct {
+		Provider string `json:"provider" binding:"required,oneof=paddle payhere"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "provider must be paddle or payhere"})
+		return
+	}
+	userID := c.GetString("user_id")
+
+	const ttl = 30 * time.Minute // long enough to complete payment, short enough to be useless if leaked
+	token, err := s.checkout.Mint(userID, ttl)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	field := map[string]string{"paddle": "checkout_token", "payhere": "custom_1"}[req.Provider]
+	c.JSON(http.StatusCreated, gin.H{
+		"token":      token,
+		"field":      field,
+		"expires_in": int(ttl.Seconds()),
+	})
+}
+
+// revokePeer removes one of the caller's own devices. Ownership check is
+// implicit: Revoke refuses to touch peers belonging to another user.
+func (s *Server) revokePeer(c *gin.Context) {
+	userID := c.GetString("user_id")
+	err := s.peers.Revoke(userID, c.Param("id"))
+	switch {
+	case err == nil:
+		c.JSON(http.StatusOK, gin.H{"revoked": true})
+	case errors.Is(err, store.ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "no such peer for this user"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+	}
+}
+
+// logout revokes every outstanding refresh token for the caller. Access
+// tokens stay valid for at most AccessTTL (15 min) by design.
+func (s *Server) logout(c *gin.Context) {
+	if err := s.refreshTokens.revokeAllFor(c.GetString("user_id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"logged_out": true})
+}
+

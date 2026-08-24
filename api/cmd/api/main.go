@@ -42,6 +42,7 @@ func main() {
 		JWTPrivateKey:   loadRSAPrivateKey(getenv("JWT_PRIVATE_KEY_PATH", "")),
 		PaddleSecret:    os.Getenv("PADDLE_WEBHOOK_SECRET"),
 		PayHereSecret:   os.Getenv("PAYHERE_MERCHANT_SECRET"),
+		CheckoutSecret:  os.Getenv("CHECKOUT_SIGNING_SECRET"),
 		SGPWgPublicKey:  os.Getenv("SGP_WG_PUBLIC_KEY"),
 		SGPAwgPublicKey: os.Getenv("SGP_AWG_PUBLIC_KEY"),
 		FSNWgPublicKey:  os.Getenv("FSN_WG_PUBLIC_KEY"),

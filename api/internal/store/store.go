@@ -8,7 +8,10 @@ import (
 	"net/netip"
 )
 
-var ErrNotFound = errors.New("store: not found")
+var (
+	ErrNotFound      = errors.New("store: not found")
+	ErrTokenReplayed = errors.New("store: refresh token already consumed")
+)
 
 type User struct {
 	ID           string
@@ -45,4 +48,11 @@ type Store interface {
 
 	UpsertSubscription(s *Subscription) error
 	GetSubscription(userID string) (*Subscription, error)
+
+	// Refresh-token rotation state (jti-tracked). Consume is atomic and
+	// single-use; a replayed jti returns ErrTokenReplayed WITH its userID
+	// so callers can burn the whole family.
+	SaveRefreshToken(jti, userID string) error
+	ConsumeRefreshToken(jti string) (userID string, err error)
+	RevokeAllRefreshTokens(userID string) error
 }

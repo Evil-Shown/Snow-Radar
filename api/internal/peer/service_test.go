@@ -112,3 +112,25 @@ func TestIdempotentConnectReusesPeer(t *testing.T) {
 		t.Fatal("same node+stealth+user should reuse the peer")
 	}
 }
+
+func TestRevokeOwnershipEnforced(t *testing.T) {
+	s := newTestService(t)
+	seedUser(t, s, "owner", "active")
+	seedUser(t, s, "attacker", "active")
+
+	p, _, _ := s.Connect("owner", "sgp", testPubKey(t), false)
+
+	// Attacker cannot revoke someone else's device.
+	if err := s.Revoke("attacker", p.ID); err != store.ErrNotFound {
+		t.Fatalf("cross-user revoke must be NotFound, got %v", err)
+	}
+
+	// Owner revoke frees the lease back to the pool.
+	if err := s.Revoke("owner", p.ID); err != nil {
+		t.Fatalf("legit revoke failed: %v", err)
+	}
+	next, _, _ := s.Connect("owner", "sgp", testPubKey(t), false)
+	if next.Address.Addr().String() != "10.20.0.2" {
+		t.Fatalf("freed address not reused, got %v", next.Address)
+	}
+}

@@ -155,3 +155,52 @@ func (p *Postgres) GetSubscription(userID string) (*Subscription, error) {
 	return &s, nil
 }
 
+// SaveRefreshToken records a new jti. Called at login/refresh time.
+func (p *Postgres) SaveRefreshToken(jti, userID string) error {
+	_, err := p.pool.Exec(context.Background(),
+		`INSERT INTO refresh_tokens (jti, user_id) VALUES ($1, $2)
+		 ON CONFLICT (jti) DO UPDATE SET consumed = FALSE, user_id = EXCLUDED.user_id`,
+		jti, userID,
+	)
+	return err
+}
+
+// ConsumeRefreshToken is atomic single-use: the UPDATE ... RETURNING pattern
+// means two concurrent requests for the same jti can never both succeed.
+// A replayed jti burns the whole family for that user (stolen-token policy).
+func (p *Postgres) ConsumeRefreshToken(jti string) (string, error) {
+	ctx := context.Background()
+	var userID string
+	err := p.pool.QueryRow(ctx,
+		`UPDATE refresh_tokens SET consumed = TRUE
+		 WHERE jti = $1 AND consumed = FALSE
+		 RETURNING user_id`, jti,
+	).Scan(&userID)
+	if err == nil {
+		return userID, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	// No unconsumed row matched: either unknown or already consumed.
+	err = p.pool.QueryRow(ctx,
+		`SELECT user_id FROM refresh_tokens WHERE jti = $1`, jti,
+	).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	// Replay confirmed — burn the family.
+	_, _ = p.pool.Exec(ctx,
+		`UPDATE refresh_tokens SET consumed = TRUE WHERE user_id = $1`, userID)
+	return userID, ErrTokenReplayed
+}
+
+func (p *Postgres) RevokeAllRefreshTokens(userID string) error {
+	_, err := p.pool.Exec(context.Background(),
+		`UPDATE refresh_tokens SET consumed = TRUE WHERE user_id = $1`, userID)
+	return err
+}
+

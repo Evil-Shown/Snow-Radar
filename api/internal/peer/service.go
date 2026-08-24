@@ -124,6 +124,35 @@ func (s *Service) renderClientConfig(p *store.Peer) string {
 	return cfg
 }
 
+// Revoke deactivates one of userID's own peers and releases its address
+// back to the pool. Ownership is enforced: a peer belonging to another
+// user is indistinguishable from a nonexistent one.
+func (s *Service) Revoke(userID, peerID string) error {
+	peers, err := s.store.PeersByUser(userID)
+	if err != nil {
+		return err
+	}
+	var target *store.Peer
+	for _, p := range peers {
+		if p.ID == peerID {
+			target = p
+			break
+		}
+	}
+	if target == nil {
+		return store.ErrNotFound
+	}
+
+	if entryA, ok := s.allocators[target.NodeID]; ok {
+		alloc := entryA.wg
+		if target.Stealth {
+			alloc = entryA.awg
+		}
+		_ = alloc.Release(target.Address, userID)
+	}
+	return s.store.RevokePeer(peerID, userID)
+}
+
 func newID() string {
 	b := make([]byte, 12)
 	_, _ = rand.Read(b)

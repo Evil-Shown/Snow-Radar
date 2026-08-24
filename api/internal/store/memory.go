@@ -14,6 +14,7 @@ type Memory struct {
 	byEmail map[string]*User
 	peers   map[string]*Peer // by id
 	subs    map[string]*Subscription
+	refresh map[string]*refreshRow
 }
 
 func NewMemory() *Memory {
@@ -22,6 +23,7 @@ func NewMemory() *Memory {
 		byEmail: map[string]*User{},
 		peers:   map[string]*Peer{},
 		subs:    map[string]*Subscription{},
+		refresh: map[string]*refreshRow{},
 	}
 }
 
@@ -108,6 +110,46 @@ func (m *Memory) GetSubscription(userID string) (*Subscription, error) {
 	}
 	cp := *s
 	return &cp, nil
+}
+
+type refreshRow struct {
+	userID   string
+	consumed bool
+}
+
+func (m *Memory) SaveRefreshToken(jti, userID string) error {
+	m.mu.Lock(); defer m.mu.Unlock()
+	m.refresh[jti] = &refreshRow{userID: userID}
+	return nil
+}
+
+func (m *Memory) ConsumeRefreshToken(jti string) (string, error) {
+	m.mu.Lock(); defer m.mu.Unlock()
+	row, ok := m.refresh[jti]
+	if !ok {
+		return "", ErrNotFound
+	}
+	if row.consumed {
+		// Replay: burn every outstanding token for this user.
+		for _, other := range m.refresh {
+			if other.userID == row.userID {
+				other.consumed = true
+			}
+		}
+		return row.userID, ErrTokenReplayed
+	}
+	row.consumed = true
+	return row.userID, nil
+}
+
+func (m *Memory) RevokeAllRefreshTokens(userID string) error {
+	m.mu.Lock(); defer m.mu.Unlock()
+	for _, row := range m.refresh {
+		if row.userID == userID {
+			row.consumed = true
+		}
+	}
+	return nil
 }
 
 func itoa(n int) string {
