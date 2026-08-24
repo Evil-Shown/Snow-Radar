@@ -42,13 +42,15 @@ func mustPrefix(s string) netip.Prefix {
 }
 
 // Allocator hands out single-host leases from a /24 pool, skipping the server
-// address (.1). Safe for concurrent use.
+// address (.1). Released addresses are reused immediately (free-list).
+// Safe for concurrent use.
 type Allocator struct {
 	mu      sync.Mutex
 	node    Node
 	stealth bool // false => WGPrefix, true => AWGPrefix
 	held    map[netip.Addr]string
-	next    int // next host octet to try
+	free    []netip.Addr // released addresses, reused first
+	next    int          // next host octet to try when free-list is empty
 }
 
 func New(nodeID string, stealth bool) (*Allocator, error) {
@@ -67,10 +69,19 @@ func (a *Allocator) prefix() netip.Prefix {
 	return a.node.WGPrefix
 }
 
-// Allocate returns the next free lease for peerID.
+// Allocate returns the next free lease for peerID, reusing released
+// addresses before extending into fresh territory.
 func (a *Allocator) Allocate(peerID string) (netip.Prefix, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	// Fast path: hand back a released address.
+	if n := len(a.free); n > 0 {
+		addr := a.free[n-1]
+		a.free = a.free[:n-1]
+		a.held[addr] = peerID
+		return netip.PrefixFrom(addr, a.prefix().Bits()), nil
+	}
 
 	base := a.prefix()
 	for i := 0; i < 253; i++ {
@@ -103,6 +114,7 @@ func (a *Allocator) Release(addr netip.Prefix, peerID string) error {
 		return ErrNotHeld
 	}
 	delete(a.held, addr.Addr())
+	a.free = append(a.free, addr.Addr())
 	return nil
 }
 

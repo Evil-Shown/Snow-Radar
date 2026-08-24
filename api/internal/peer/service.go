@@ -79,8 +79,11 @@ func (s *Service) Connect(userID, nodeID, clientPubKey string, stealth bool) (*s
 	}
 
 	existing, _ := s.store.PeersByUser(userID)
+	// Idempotent ONLY on exact (node, stealth, pubkey) match. Matching
+	// without the pubkey let a second DEVICE inherit the first device's
+	// tunnel identity — found by TestDeviceLimitEnforced.
 	for _, p := range existing {
-		if p.NodeID == nodeID && p.Stealth == stealth {
+		if p.NodeID == nodeID && p.Stealth == stealth && p.PublicKey == clientPubKey {
 			return p, s.renderClientConfig(p), nil
 		}
 	}

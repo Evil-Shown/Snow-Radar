@@ -48,20 +48,25 @@ func TestVerifyPaddleRejectsReplay(t *testing.T) {
 }
 
 func TestParsePaddleNormalizesEvent(t *testing.T) {
-	raw := []byte(`{"event_type":"subscription.updated","data":{"id":"sub_42","status":"canceled","custom_data":{"user_id":"u-7"}}}`)
+	raw := []byte(`{"event_type":"subscription.updated","data":{"id":"sub_42","status":"canceled","custom_data":{"checkout_token":"tok"}}}`)
 	ev, err := ParsePaddle(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ev.Provider != "paddle" || ev.External != "sub_42" || ev.UserID != "u-7" || ev.State != StateCancelled {
+	if ev.Provider != "paddle" || ev.External != "sub_42" || ev.State != StateCancelled {
 		t.Fatalf("normalized event wrong: %+v", ev)
+	}
+	if ev.CheckoutToken != "tok" {
+		t.Fatalf("checkout token not extracted: %q", ev.CheckoutToken)
 	}
 }
 
-func TestParsePaddleRejectsMissingUserID(t *testing.T) {
-	raw := []byte(`{"event_type":"x","data":{"id":"sub_1","status":"active"}}`)
+func TestParsePaddleRejectsMissingCheckoutToken(t *testing.T) {
+	// Provider-controlled user_id is no longer honored — its absence of a
+	// signed checkout token must reject the payload outright.
+	raw := []byte(`{"event_type":"x","data":{"id":"sub_1","status":"active","custom_data":{"user_id":"u-7"}}}`)
 	if _, err := ParsePaddle(raw); err == nil {
-		t.Fatal("payload without custom_data/user_id must be rejected")
+		t.Fatal("payload without checkout_token must be rejected")
 	}
 }
 

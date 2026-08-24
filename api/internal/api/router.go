@@ -39,7 +39,7 @@ type Server struct {
 	store   store.Store
 	issuer  *auth.TokenIssuer
 	peers   *peer.Service
-	refresh *refreshStore
+	refreshTokens *refreshStore
 	limiter *rateLimiter
 }
 
@@ -53,7 +53,7 @@ func NewServer(cfg Config, st store.Store, issuer *auth.TokenIssuer) (*Server, e
 		cfg:     cfg,
 		store:   st,
 		issuer:  issuer,
-		refresh: newRefreshStore(),
+		refreshTokens: newRefreshStore(),
 		limiter: newRateLimiter(),
 	}
 	pubKeys := map[string]string{
@@ -129,7 +129,7 @@ func (s *Server) issueTokenPair(userID string) (access, refresh string, err erro
 	if refresh, err = s.issuer.Issue(userID, auth.TokenRefresh, jti); err != nil {
 		return "", "", err
 	}
-	s.refresh.issue(jti, userID) // trackable + revocable from now on
+	s.refreshTokens.issue(jti, userID) // trackable + revocable from now on
 	return access, refresh, nil
 }
 
@@ -170,7 +170,7 @@ func (s *Server) refresh(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 		return
 	}
-	rec, ok := s.refresh.consume(claims.ID)
+	rec, ok := s.refreshTokens.consume(claims.ID)
 	if !ok || rec.userID != claims.UserID {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "token revoked or replayed"})
 		return
@@ -266,20 +266,20 @@ func (s *Server) paddleWebhook(c *gin.Context) {
 		return
 	}
 
-	// AUDIT FINDING #5 (HIGH): the webhook previously trusted user_id from
-	// provider custom_data unconditionally. With guessable sequential user
-	// IDs an attacker could attach a subscription to a VICTIM's account.
-	// Mitigations now: (1) target user must exist; (2) a webhook may never
-	// overwrite an ACTIVE subscription held under a DIFFERENT provider
-	// binding without matching external id (i.e., only the owner of that
-	// provider subscription or a fresh checkout can transition it).
-	victim, err := s.store.GetUser(ev.UserID)
+	// AUDIT FINDING #5 + residual B-webhook: the webhook NEVER trusts a
+	// provider-controlled user identifier. Identity comes exclusively from
+	// verifying our signed checkout session (billing.CheckoutService).
+	checkout := billing.NewCheckoutService([]byte(s.cfg.PaddleSecret))
+	userID, err := checkout.Verify(ev.CheckoutToken)
 	if err != nil {
-		// Unknown user: reject instead of creating phantom entitlements.
+		c.JSON(http.StatusForbidden, gin.H{"error": "invalid checkout session"})
+		return
+	}
+	if _, err := s.store.GetUser(userID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown user reference"})
 		return
 	}
-	existing, err := s.store.GetSubscription(victim.ID)
+	existing, err := s.store.GetSubscription(userID)
 	if err == nil && existing.External != ev.External &&
 		existing.State == string(billing.StateActive) {
 		c.JSON(http.StatusConflict, gin.H{"error": "user already holds an active subscription"})
@@ -287,7 +287,7 @@ func (s *Server) paddleWebhook(c *gin.Context) {
 	}
 
 	if err := s.store.UpsertSubscription(&store.Subscription{
-		UserID: ev.UserID, Provider: ev.Provider, External: ev.External, State: string(ev.State),
+		UserID: userID, Provider: ev.Provider, External: ev.External, State: string(ev.State),
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -320,10 +320,12 @@ func (s *Server) payHereWebhook(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown status_code"})
 		return
 	}
-	// Same takeover guard as the Paddle path (finding #5).
-	userID := f.Get("custom_1")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing user reference"})
+	// Same checkout-session binding as the Paddle path: custom_1 carries
+	// OUR signed token, not a raw user id.
+	checkout := billing.NewCheckoutService([]byte(s.cfg.PayHereSecret))
+	userID, err := checkout.Verify(f.Get("custom_1"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "invalid checkout session"})
 		return
 	}
 	if _, err := s.store.GetUser(userID); err != nil {

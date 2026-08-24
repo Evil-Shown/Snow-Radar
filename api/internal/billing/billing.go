@@ -97,28 +97,29 @@ const (
 
 // Event is a normalized provider-agnostic subscription event.
 type Event struct {
-	Provider string            `json:"provider"`
-	External string            `json:"external_id"`
-	UserID   string            `json:"user_id"`
-	State    SubscriptionState `json:"state"`
+	Provider      string            `json:"provider"`
+	External      string            `json:"external_id"`
+	State         SubscriptionState `json:"state"`
+	CheckoutToken string            `json:"-"`
 }
 
 // ParsePaddle extracts a normalized Event from a webhook body.
+// The provider's custom_data.user_id is deliberately NOT returned — identity
+// comes only from verifying CheckoutToken server-side (see checkout.go).
 func ParsePaddle(raw []byte) (*Event, error) {
 	var payload struct {
-		EventType string `json:"event_type"`
-		Data      struct {
+		Data struct {
 			ID         string `json:"id"`
 			Status     string `json:"status"`
 			CustomData *struct {
-				UserID string `json:"user_id"`
+				CheckoutToken string `json:"checkout_token"`
 			} `json:"custom_data"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrBadPayload, err)
 	}
-	if payload.Data.ID == "" || payload.Data.CustomData == nil {
+	if payload.Data.ID == "" || payload.Data.CustomData == nil || payload.Data.CustomData.CheckoutToken == "" {
 		return nil, ErrBadPayload
 	}
 	state := map[string]SubscriptionState{
@@ -127,12 +128,13 @@ func ParsePaddle(raw []byte) (*Event, error) {
 		"past_due":     StatePastDue,
 		"canceled":     StateCancelled,
 		"cancelled":    StateCancelled,
-		"subscription_updated": StateActive,
 	}[payload.Data.Status]
-	if state == "" && payload.Data.Status != "" {
-		state = SubscriptionState(payload.Data.Status)
-	}
-	return &Event{Provider: "paddle", External: payload.Data.ID, UserID: payload.Data.CustomData.UserID, State: state}, nil
+	return &Event{
+		Provider:      "paddle",
+		External:      payload.Data.ID,
+		State:         state,
+		CheckoutToken: payload.Data.CustomData.CheckoutToken,
+	}, nil
 }
 
 // ReadBody caps webhook body size (DoS guard) before any parsing.

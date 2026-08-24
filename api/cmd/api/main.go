@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/gin-gonic/gin"
-
 	"github.com/evil-shown/snow-radar/api/internal/api"
 	"github.com/evil-shown/snow-radar/api/internal/auth"
 	"github.com/evil-shown/snow-radar/api/internal/store"
